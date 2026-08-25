@@ -7,10 +7,11 @@ package statedb
 import (
 	"context"
 	"database/sql"
-	"strconv"
 	"strings"
 	"time"
 )
+
+const stateSchemaToken = "{{state}}"
 
 // database bounds PostgreSQL connection acquisition and statement execution.
 type database struct {
@@ -19,23 +20,13 @@ type database struct {
 	postgresql bool
 }
 
-// bind rewrites the package's SQLite-style placeholders for PostgreSQL.
-func (d *database) bind(query string) string {
-	if !d.postgresql {
-		return query
+// stateSQL resolves explicit state-schema tokens for the configured database.
+func (d *database) stateSQL(query string) string {
+	schema := ""
+	if d.postgresql {
+		schema = "truster_state."
 	}
-	var b strings.Builder
-	parameter := 0
-	for _, r := range query {
-		if r != '?' {
-			b.WriteRune(r)
-			continue
-		}
-		parameter++
-		b.WriteByte('$')
-		b.WriteString(strconv.Itoa(parameter))
-	}
-	return b.String()
+	return strings.ReplaceAll(query, stateSchemaToken, schema)
 }
 
 // queryContext creates the context used by one database operation.
@@ -55,20 +46,20 @@ func (d *database) operationContext(parent context.Context) (context.Context, co
 func (d *database) Exec(query string, args ...any) (sql.Result, error) {
 	ctx, cancel := d.queryContext()
 	defer cancel()
-	return d.raw.ExecContext(ctx, d.bind(query), args...)
+	return d.raw.ExecContext(ctx, d.stateSQL(query), args...)
 }
 
 // ExecContext executes a statement with a caller-owned context.
 func (d *database) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
 	ctx, cancel := d.operationContext(ctx)
 	defer cancel()
-	return d.raw.ExecContext(ctx, d.bind(query), args...)
+	return d.raw.ExecContext(ctx, d.stateSQL(query), args...)
 }
 
 // Query starts a query whose context remains valid until its rows are closed.
 func (d *database) Query(query string, args ...any) (*rows, error) {
 	ctx, cancel := d.queryContext()
-	r, err := d.raw.QueryContext(ctx, d.bind(query), args...)
+	r, err := d.raw.QueryContext(ctx, d.stateSQL(query), args...)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -79,12 +70,12 @@ func (d *database) Query(query string, args ...any) (*rows, error) {
 // QueryRow starts a query whose context remains valid through Scan.
 func (d *database) QueryRow(query string, args ...any) *row {
 	ctx, cancel := d.queryContext()
-	return &row{Row: d.raw.QueryRowContext(ctx, d.bind(query), args...), cancel: cancel}
+	return &row{Row: d.raw.QueryRowContext(ctx, d.stateSQL(query), args...), cancel: cancel}
 }
 
 // QueryRowContext delegates a caller-owned bounded query.
 func (d *database) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
-	return d.raw.QueryRowContext(ctx, d.bind(query), args...)
+	return d.raw.QueryRowContext(ctx, d.stateSQL(query), args...)
 }
 
 // Begin starts a transaction and retains its timeout through commit or rollback.
@@ -149,12 +140,12 @@ type transaction struct {
 
 // Exec executes a statement within the transaction context.
 func (t *transaction) Exec(query string, args ...any) (sql.Result, error) {
-	return t.ExecContext(t.ctx, t.database.bind(query), args...)
+	return t.ExecContext(t.ctx, t.database.stateSQL(query), args...)
 }
 
 // QueryRow starts a row query within the transaction context.
 func (t *transaction) QueryRow(query string, args ...any) *sql.Row {
-	return t.QueryRowContext(t.ctx, t.database.bind(query), args...)
+	return t.QueryRowContext(t.ctx, t.database.stateSQL(query), args...)
 }
 
 // Commit commits and releases the transaction context.

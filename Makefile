@@ -87,7 +87,7 @@ test-postgresql: ## Start/reuse local PostgreSQL and run real state database tes
 	$$CONTAINER_CMD start truster-state-test >/dev/null 2>&1 || true; \
 	ready=0; for i in $$(seq 1 30); do $$CONTAINER_CMD exec truster-state-test pg_isready -U truster -d truster_state >/dev/null 2>&1 && ready=1 && break; sleep 1; done; \
 	test "$$ready" = 1 || { echo "PostgreSQL did not become ready"; exit 1; }; \
-	TRUSTER_STATE_TEST_DB_URL='postgresql://truster:truster@127.0.0.1:55435/truster_state?sslmode=disable' go test -v -race -count=1 ./internal/statedb -run PostgreSQL
+	TRUSTER_STATE_TEST_DIRECT_DB_URL='postgresql://truster:truster@127.0.0.1:55435/truster_state?sslmode=disable' go test -v -race -count=1 ./internal/statedb -run PostgreSQL
 
 e2e: ## Run E2E tests with Dex upstream
 	@echo "Running E2E tests..."

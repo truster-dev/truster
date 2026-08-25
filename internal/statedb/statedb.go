@@ -118,8 +118,8 @@ func GenerateAuthCode() (string, error) {
 // SaveState stores an OAuth state token.
 func (s *Store) SaveState(state *OAuthState) error {
 	query := `
-		INSERT INTO oauth_states (state_token, client_id, redirect_uri, code_challenge, nonce, oidc_state, created_at, expires_at, connector_id, scopes, refresh_mode, auth_time, offline_consent, purpose, dpop_jkt, pushed_authorization)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO {{state}}oauth_states (state_token, client_id, redirect_uri, code_challenge, nonce, oidc_state, created_at, expires_at, connector_id, scopes, refresh_mode, auth_time, offline_consent, purpose, dpop_jkt, pushed_authorization)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 	`
 	_, err := s.db.Exec(query,
 		state.StateToken,
@@ -143,8 +143,8 @@ func (s *Store) SaveState(state *OAuthState) error {
 func (s *Store) GetAndDeleteState(stateToken string) (*OAuthState, error) {
 	var state OAuthState
 	query := `
-		DELETE FROM oauth_states
-		WHERE state_token = ? AND expires_at >= ?
+		DELETE FROM {{state}}oauth_states
+		WHERE state_token = $1 AND expires_at >= $2
 		RETURNING state_token, client_id, redirect_uri, code_challenge, nonce, oidc_state, created_at, expires_at, connector_id, scopes, refresh_mode, auth_time, offline_consent, purpose, COALESCE(dpop_jkt,''), pushed_authorization
 	`
 	err := s.db.QueryRow(query, stateToken, time.Now()).Scan(
@@ -174,7 +174,7 @@ func (s *Store) GetAndDeleteState(stateToken string) (*OAuthState, error) {
 // PeekState retrieves a valid state token without consuming it.
 func (s *Store) PeekState(stateToken string) (*OAuthState, error) {
 	var state OAuthState
-	err := s.db.QueryRow(`SELECT state_token,client_id,redirect_uri,code_challenge,nonce,oidc_state,created_at,expires_at,connector_id,scopes,refresh_mode,auth_time,offline_consent,purpose,COALESCE(dpop_jkt,''),pushed_authorization FROM oauth_states WHERE state_token=?`, stateToken).Scan(
+	err := s.db.QueryRow(`SELECT state_token,client_id,redirect_uri,code_challenge,nonce,oidc_state,created_at,expires_at,connector_id,scopes,refresh_mode,auth_time,offline_consent,purpose,COALESCE(dpop_jkt,''),pushed_authorization FROM {{state}}oauth_states WHERE state_token=$1`, stateToken).Scan(
 		&state.StateToken, &state.ClientID, &state.RedirectURI, &state.CodeChallenge, &state.Nonce, &state.OIDCState, &state.CreatedAt, &state.ExpiresAt, &state.ConnectorID, &state.Scopes, &state.RefreshMode, &state.AuthTime, &state.OfflineConsent, &state.Purpose, &state.DPoPJKT, &state.PushedAuthorization)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("state token not found or already used")
@@ -190,10 +190,10 @@ func (s *Store) PeekState(stateToken string) (*OAuthState, error) {
 
 // SaveCredential records a credential only after its email has been accepted.
 func (s *Store) SaveCredential(connectorID, subject, email string, local bool, verifiedAt time.Time) error {
-	query := `INSERT INTO upstream_credentials(connector_id,subject,email,verified_at,local_verified) VALUES(?,?,?,?,?)
+	query := `INSERT INTO {{state}}upstream_credentials(connector_id,subject,email,verified_at,local_verified) VALUES($1,$2,$3,$4,$5)
 		ON CONFLICT(connector_id,subject,email) DO UPDATE SET verified_at=excluded.verified_at,local_verified=MAX(local_verified,excluded.local_verified)`
 	if s.postgresql {
-		query = `INSERT INTO upstream_credentials(connector_id,subject,email,verified_at,local_verified) VALUES(?,?,?,?,?)
+		query = `INSERT INTO {{state}}upstream_credentials(connector_id,subject,email,verified_at,local_verified) VALUES($1,$2,$3,$4,$5)
 			ON CONFLICT(connector_id,subject,email) DO UPDATE SET verified_at=excluded.verified_at,local_verified=(upstream_credentials.local_verified OR excluded.local_verified)`
 	}
 	_, err := s.db.Exec(query, connectorID, subject, email, verifiedAt, local)
@@ -206,7 +206,7 @@ func (s *Store) SaveCredential(connectorID, subject, email string, local bool, v
 // CredentialVerified reports whether this exact connector identity and email was accepted before.
 func (s *Store) CredentialVerified(connectorID, subject, email string) (exists, local bool, err error) {
 	var value bool
-	err = s.db.QueryRow(`SELECT local_verified FROM upstream_credentials WHERE connector_id=? AND subject=? AND email=?`, connectorID, subject, email).Scan(&value)
+	err = s.db.QueryRow(`SELECT local_verified FROM {{state}}upstream_credentials WHERE connector_id=$1 AND subject=$2 AND email=$3`, connectorID, subject, email).Scan(&value)
 	if err == sql.ErrNoRows {
 		return false, false, nil
 	}
@@ -216,8 +216,8 @@ func (s *Store) CredentialVerified(connectorID, subject, email string) (exists, 
 // SaveAuthCode stores an authorization code.
 func (s *Store) SaveAuthCode(code *AuthCode) error {
 	query := `
-		INSERT INTO auth_codes (code, client_id, redirect_uri, code_challenge, email, email_verified, nonce, created_at, expires_at, scopes, refresh_mode, auth_time, connector_id, upstream_subject, offline_consent, dpop_jkt, pushed_authorization)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO {{state}}auth_codes (code, client_id, redirect_uri, code_challenge, email, email_verified, nonce, created_at, expires_at, scopes, refresh_mode, auth_time, connector_id, upstream_subject, offline_consent, dpop_jkt, pushed_authorization)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 	`
 	_, err := s.db.Exec(query,
 		code.Code,
@@ -240,7 +240,7 @@ func (s *Store) SaveAuthCode(code *AuthCode) error {
 // PeekAuthCode retrieves a valid authorization code without consuming it.
 func (s *Store) PeekAuthCode(codeStr string, now time.Time) (*AuthCode, error) {
 	var code AuthCode
-	err := s.db.QueryRow(`SELECT code,client_id,redirect_uri,code_challenge,email,email_verified,nonce,created_at,expires_at,scopes,refresh_mode,auth_time,connector_id,upstream_subject,offline_consent,COALESCE(dpop_jkt,''),pushed_authorization FROM auth_codes WHERE code=?`, codeStr).Scan(
+	err := s.db.QueryRow(`SELECT code,client_id,redirect_uri,code_challenge,email,email_verified,nonce,created_at,expires_at,scopes,refresh_mode,auth_time,connector_id,upstream_subject,offline_consent,COALESCE(dpop_jkt,''),pushed_authorization FROM {{state}}auth_codes WHERE code=$1`, codeStr).Scan(
 		&code.Code, &code.ClientID, &code.RedirectURI, &code.CodeChallenge, &code.Email, &code.EmailVerified, &code.Nonce, &code.CreatedAt, &code.ExpiresAt, &code.Scopes, &code.RefreshMode, &code.AuthTime, &code.ConnectorID, &code.UpstreamSubject, &code.OfflineConsent, &code.DPoPJKT, &code.PushedAuthorization)
 	if err == sql.ErrNoRows || (err == nil && !now.Before(code.ExpiresAt)) {
 		return nil, ErrInvalidGrant
@@ -255,8 +255,8 @@ func (s *Store) PeekAuthCode(codeStr string, now time.Time) (*AuthCode, error) {
 func (s *Store) GetAndDeleteAuthCode(codeStr string) (*AuthCode, error) {
 	var code AuthCode
 	query := `
-		DELETE FROM auth_codes
-		WHERE code = ? AND expires_at >= ?
+		DELETE FROM {{state}}auth_codes
+		WHERE code = $1 AND expires_at >= $2
 		RETURNING code, client_id, redirect_uri, code_challenge, email, email_verified, nonce, created_at, expires_at, scopes, refresh_mode, auth_time, connector_id, upstream_subject, offline_consent, COALESCE(dpop_jkt,''), pushed_authorization
 	`
 	err := s.db.QueryRow(query, codeStr, time.Now()).Scan(
@@ -326,25 +326,25 @@ func (s *Store) cleanupProtocolState(now time.Time) {
 
 // cleanupExpiredAtContext removes expired records using a cancellable cleanup context.
 func (s *Store) cleanupExpiredAtContext(ctx context.Context, now time.Time) {
-	result, err := s.deleteExpiredBatchContext(ctx, "oauth_states", "expires_at < ?", now)
+	result, err := s.deleteExpiredBatchContext(ctx, "oauth_states", "expires_at < $1", now)
 	if err != nil {
 		s.logger.Error("failed to clean up expired states", "error", err)
 	} else if count, rowsErr := result.RowsAffected(); rowsErr == nil && count > 0 {
 		s.logger.Debug("cleaned up expired states", "count", count)
 	}
 
-	result, err = s.deleteExpiredBatchContext(ctx, "auth_codes", "expires_at < ?", now)
+	result, err = s.deleteExpiredBatchContext(ctx, "auth_codes", "expires_at < $1", now)
 	if err != nil {
 		s.logger.Error("failed to clean up expired auth codes", "error", err)
 	} else if count, rowsErr := result.RowsAffected(); rowsErr == nil && count > 0 {
 		s.logger.Debug("cleaned up expired auth codes", "count", count)
 	}
-	_, _ = s.deleteExpiredBatchContext(ctx, "otp_challenges", "expires_at < ?", now)
-	_, _ = s.deleteExpiredBatchContext(ctx, "otp_sends", "sent_at < ?", now.Add(-time.Hour))
-	_, _ = s.deleteExpiredBatchContext(ctx, "grant_actions", "expires_at <= ?", now)
-	_, _ = s.deleteExpiredBatchContext(ctx, "identity_selections", "expires_at <= ?", now)
-	_, _ = s.deleteExpiredBatchContext(ctx, "flow_credentials", "expires_at <= ?", now)
-	_, _ = s.deleteExpiredBatchContext(ctx, "refresh_grants", "absolute_expires_at <= ?", now)
+	_, _ = s.deleteExpiredBatchContext(ctx, "otp_challenges", "expires_at < $1", now)
+	_, _ = s.deleteExpiredBatchContext(ctx, "otp_sends", "sent_at < $1", now.Add(-time.Hour))
+	_, _ = s.deleteExpiredBatchContext(ctx, "grant_actions", "expires_at <= $1", now)
+	_, _ = s.deleteExpiredBatchContext(ctx, "identity_selections", "expires_at <= $1", now)
+	_, _ = s.deleteExpiredBatchContext(ctx, "flow_credentials", "expires_at <= $1", now)
+	_, _ = s.deleteExpiredBatchContext(ctx, "refresh_grants", "absolute_expires_at <= $1", now)
 	if !s.postgresql {
 		if _, err := s.db.ExecContext(ctx, "PRAGMA optimize"); err != nil {
 			s.logger.Error("failed to optimize database", "error", err)
@@ -370,6 +370,7 @@ func (s *Store) lockJoinedRows() string {
 
 // deleteExpiredBatchContext removes an eligible batch with caller cancellation.
 func (s *Store) deleteExpiredBatchContext(ctx context.Context, table, predicate string, value any) (sql.Result, error) {
+	table = stateSchemaToken + table
 	if s.postgresql {
 		query := fmt.Sprintf("DELETE FROM %s WHERE ctid IN (SELECT ctid FROM %s WHERE %s LIMIT 500 FOR UPDATE SKIP LOCKED)", table, table, predicate)
 		return s.db.ExecContext(ctx, query, value)

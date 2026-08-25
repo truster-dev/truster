@@ -10,8 +10,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 DEX_IMAGE="ghcr.io/dexidp/dex@sha256:8499afd690c437f52301efd2b05b2455da5bd2dfc20332cd697dc9937f808462" # v2.45.1
 POSTGRES_IMAGE="docker.io/library/postgres@sha256:6567bca8d7bc8c82c5922425a0baee57be8402df92bae5eacad5f01ae9544daa" # 17.5-alpine3.22
+PGBOUNCER_IMAGE="ghcr.io/cloudnative-pg/pgbouncer@sha256:fd6ce6214390a2ff90bde014c6e5bfa64c99fcca6b0bdd53a63be4865ee5b5ac" # v1.25.2
 DEX_CONTAINER_NAME="truster-e2e-dex"
 POSTGRES_CONTAINER_NAME="truster-e2e-postgres"
+PGBOUNCER_CONTAINER_NAME="truster-e2e-pgbouncer"
+DATABASE_NETWORK_NAME="truster-e2e-database"
 DEX_SUBJECT="CiQwOGE4Njg0Yi1kYjg4LTRiNzMtOTBhOS0zY2QxNjYxZjU0NjYSBWxvY2Fs"
 STATIC_TRUST_CLIENT_ID="static-ci-token-exchange-e2e"
 STATIC_TRUST_CLIENT_SECRET="static-ci-token-exchange-e2e-secret"
@@ -105,8 +108,11 @@ echo "==> E2E Test: Starting Dex and truster"
 remove_test_containers() {
     $CONTAINER_CMD stop "$DEX_CONTAINER_NAME" 2>/dev/null || true
     $CONTAINER_CMD rm "$DEX_CONTAINER_NAME" 2>/dev/null || true
+    $CONTAINER_CMD stop "$PGBOUNCER_CONTAINER_NAME" 2>/dev/null || true
+    $CONTAINER_CMD rm "$PGBOUNCER_CONTAINER_NAME" 2>/dev/null || true
     $CONTAINER_CMD stop "$POSTGRES_CONTAINER_NAME" 2>/dev/null || true
     $CONTAINER_CMD rm "$POSTGRES_CONTAINER_NAME" 2>/dev/null || true
+    $CONTAINER_CMD network rm "$DATABASE_NETWORK_NAME" 2>/dev/null || true
 }
 
 cleanup() {
@@ -153,6 +159,7 @@ wait_for_replicas() {
         done
         if [ "$ready" != true ]; then
             cat "${TRUSTER_LOGS[$replica]}"
+            $CONTAINER_CMD logs "$PGBOUNCER_CONTAINER_NAME" 2>&1 || true
             echo "ERROR: truster replica $((replica + 1)) failed readiness"
             exit 1
         fi
@@ -213,9 +220,10 @@ sed -e "s#http://127.0.0.1:5556#$DEX_ORIGIN#" \
 
 echo "==> Cleaning up any existing test containers..."
 remove_test_containers
+$CONTAINER_CMD network create "$DATABASE_NETWORK_NAME" >/dev/null
 
 echo "==> Starting PostgreSQL policy database container..."
-$CONTAINER_CMD run -d --name "$POSTGRES_CONTAINER_NAME" -p 55434:5432 \
+$CONTAINER_CMD run -d --name "$POSTGRES_CONTAINER_NAME" --network "$DATABASE_NETWORK_NAME" -p 55434:5432 \
     -e POSTGRES_PASSWORD=e2e-admin -e POSTGRES_DB=truster_e2e "$POSTGRES_IMAGE"
 for i in {1..30}; do
     # The image uses a temporary socket-only server during first-time initialization.
@@ -234,7 +242,7 @@ $CONTAINER_CMD exec -i "$POSTGRES_CONTAINER_NAME" psql -v ON_ERROR_STOP=1 \
     -U postgres -d truster_e2e >/dev/null <<'SQL'
 CREATE ROLE truster_policy LOGIN PASSWORD 'e2e-read-only';
 CREATE ROLE truster_state_migration LOGIN PASSWORD 'e2e-migration';
-CREATE ROLE truster_state_runtime LOGIN PASSWORD 'e2e-runtime';
+CREATE ROLE truster_state LOGIN PASSWORD 'e2e-state';
 INSERT INTO truster_policy.clients VALUES (:'db_interactive_client_id'), (:'db_trust_client_id');
 -- Dex's mockCallback connector returns this fixed, non-configurable identity.
 INSERT INTO truster_policy.users VALUES (:'db_interactive_client_id', 'kilgore@kilgore.trout', ARRAY['admins','developers']);
@@ -242,12 +250,39 @@ INSERT INTO truster_policy.trust_bindings VALUES (:'db_trust_client_id','dex',:'
 GRANT CONNECT ON DATABASE truster_e2e TO truster_policy;
 GRANT USAGE ON SCHEMA truster_policy TO truster_policy;
 GRANT SELECT ON ALL TABLES IN SCHEMA truster_policy TO truster_policy;
-ALTER ROLE truster_policy SET default_transaction_read_only = on;
 GRANT CONNECT, CREATE ON DATABASE truster_e2e TO truster_state_migration;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 GRANT USAGE, CREATE ON SCHEMA public TO truster_state_migration;
-GRANT CONNECT ON DATABASE truster_e2e TO truster_state_runtime;
+GRANT CONNECT ON DATABASE truster_e2e TO truster_state;
 SQL
+
+cat > "$E2E_TEMP_DIR/pgbouncer.ini" <<EOF
+[databases]
+truster_e2e = host=$POSTGRES_CONTAINER_NAME port=5432 dbname=truster_e2e
+
+[pgbouncer]
+listen_addr = 0.0.0.0
+listen_port = 6432
+pool_mode = transaction
+max_prepared_statements = 0
+auth_type = scram-sha-256
+auth_file = /etc/pgbouncer/userlist.txt
+EOF
+cat > "$E2E_TEMP_DIR/pgbouncer-userlist.txt" <<'EOF'
+"truster_policy" "e2e-read-only"
+"truster_state" "e2e-state"
+EOF
+
+echo "==> Starting transaction-mode PgBouncer container..."
+$CONTAINER_CMD run -d --name "$PGBOUNCER_CONTAINER_NAME" --network "$DATABASE_NETWORK_NAME" -p 55433:6432 \
+    -v "$E2E_TEMP_DIR/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro" \
+    -v "$E2E_TEMP_DIR/pgbouncer-userlist.txt:/etc/pgbouncer/userlist.txt:ro" \
+    "$PGBOUNCER_IMAGE"
+for i in {1..30}; do
+    if $CONTAINER_CMD exec "$PGBOUNCER_CONTAINER_NAME" pg_isready -h 127.0.0.1 -p 6432 -U truster_policy -d truster_e2e >/dev/null 2>&1; then break; fi
+    if [ "$i" -eq 30 ]; then $CONTAINER_CMD logs "$PGBOUNCER_CONTAINER_NAME"; echo "ERROR: PgBouncer failed to start"; exit 1; fi
+    sleep 1
+done
 
 echo "==> Starting Dex container..."
 $CONTAINER_CMD run -d --rm --name "$DEX_CONTAINER_NAME" \
@@ -276,8 +311,8 @@ echo "==> Starting truster..."
 export TRUSTER_SIGNING_KEY="$(openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 2>/dev/null)"
 export TRUSTER_ENCRYPTION_KEY="$(openssl rand -hex 32)"
 export TRUSTER_DEX_CREDENTIALS='{"client_id":"truster-interactive-e2e","client_secret":"truster-interactive-e2e-secret"}'
-export TRUSTER_STATE_DB_URL='postgresql://truster_state_runtime:e2e-runtime@127.0.0.1:55434/truster_e2e?sslmode=disable'
-export TRUSTER_POLICY_DB_URL='postgresql://truster_policy:e2e-read-only@127.0.0.1:55434/truster_e2e?sslmode=disable'
+export TRUSTER_STATE_DB_URL='postgresql://truster_state:e2e-state@127.0.0.1:55433/truster_e2e?sslmode=disable'
+export TRUSTER_POLICY_DB_URL='postgresql://truster_policy:e2e-read-only@127.0.0.1:55433/truster_e2e?sslmode=disable'
 export TRUSTER_STATE_MIGRATION_DB_URL='postgresql://truster_state_migration:e2e-migration@127.0.0.1:55434/truster_e2e?sslmode=disable'
 TRUSTER_LOGS=("$E2E_TEMP_DIR/truster-1.log" "$E2E_TEMP_DIR/truster-2.log")
 TRUSTER_CONFIGS=("$E2E_TEMP_DIR/truster-1.jsonc" "$E2E_TEMP_DIR/truster-2.jsonc")
@@ -297,10 +332,10 @@ go build -o "$E2E_TEMP_DIR/proxy" "$PROJECT_ROOT/scripts/test-rr-proxy"
 echo "==> Migrating PostgreSQL state database with the migration-only role..."
 "$PROJECT_ROOT/bin/truster" migrate --config "${TRUSTER_CONFIGS[0]}"
 $CONTAINER_CMD exec -i "$POSTGRES_CONTAINER_NAME" psql -v ON_ERROR_STOP=1 -U postgres -d truster_e2e >/dev/null <<'SQL'
-GRANT USAGE ON SCHEMA truster_state TO truster_state_runtime;
-GRANT USAGE ON SCHEMA public TO truster_state_runtime;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA truster_state TO truster_state_runtime;
-GRANT SELECT ON TABLE public.schema_migrations TO truster_state_runtime;
+GRANT USAGE ON SCHEMA truster_state TO truster_state;
+GRANT USAGE ON SCHEMA public TO truster_state;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA truster_state TO truster_state;
+GRANT SELECT ON TABLE public.schema_migrations TO truster_state;
 SQL
 
 echo "==> Starting two truster replicas and the round-robin issuer proxy..."
@@ -677,7 +712,7 @@ OUTAGE_STATUS="$(curl -sS -o "$OUTAGE_RESPONSE" -w '%{http_code}' \
     --data-urlencode client_id="$DB_INTERACTIVE_CLIENT_ID" \
     --data-urlencode refresh_token='ert1.AAAAAAAAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' \
     "$TRUSTER_TOKEN_URL" || true)"
-if [ "$OUTAGE_STATUS" -lt 500 ] || grep -Eiq 'postgres|truster|127\.0\.0\.1|55434|e2e-runtime|password' "$OUTAGE_RESPONSE"; then
+if [ "$OUTAGE_STATUS" -lt 500 ] || grep -Eiq 'postgres|truster|127\.0\.0\.1|55434|e2e-state|password' "$OUTAGE_RESPONSE"; then
     cat "$OUTAGE_RESPONSE"
     echo "ERROR: stateful operation did not fail closed without database details (HTTP $OUTAGE_STATUS)"
     exit 1

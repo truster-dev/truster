@@ -101,7 +101,7 @@ type PostgreSQL struct {
 	compile   func([]byte) (*jsonschema.Schema, error)
 }
 
-// NewPostgreSQL validates the connection string and creates a dedicated read-only pgx pool.
+// NewPostgreSQL validates the connection string and creates a dedicated pgx pool.
 func NewPostgreSQL(ctx context.Context, connectionString string, cfg config.PolicyDatabaseConfig, issuers map[string]config.TrustIssuerConfig, logger *slog.Logger) (*PostgreSQL, error) {
 	poolCfg, err := pgxpool.ParseConfig(connectionString)
 	if err != nil {
@@ -112,9 +112,7 @@ func NewPostgreSQL(ctx context.Context, connectionString string, cfg config.Poli
 	}
 	poolCfg.MaxConns = cfg.MaxConnections
 	poolCfg.MaxConnIdleTime = 5 * time.Minute
-	poolCfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
-	poolCfg.ConnConfig.RuntimeParams["statement_timeout"] = fmt.Sprintf("%d", cfg.QueryTimeout.Duration().Milliseconds())
-	poolCfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeCacheStatement
+	poolCfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
 	maxBodyLen := backendMessageBodyLimit(cfg)
 	poolCfg.ConnConfig.BuildFrontend = func(r io.Reader, w io.Writer) *pgproto3.Frontend {
 		frontend := pgproto3.NewFrontend(r, w)
@@ -230,7 +228,10 @@ func queryPostgreSQL(ctx context.Context, pool *pgxpool.Pool, cfg config.PolicyD
 		}
 		out.rows = append(out.rows, values)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+	return out, nil
 }
 
 // checkRawRow rejects nulls and oversized wire values before pgx decoding allocates destinations.
@@ -357,22 +358,18 @@ func validateTextArrayWire(value []byte, maxElements, maxElementBytes int) error
 	return nil
 }
 
-// validatePool eagerly verifies connectivity, read-only session state, and configured statements.
+// validatePool eagerly verifies connectivity and configured statements.
 func validatePool(ctx context.Context, pool *pgxpool.Pool, cfg config.PolicyDatabaseConfig) error {
 	if err := pool.Ping(ctx); err != nil {
 		return fmt.Errorf("connect to policy database")
 	}
-	conn, err := pool.Acquire(ctx)
+	connection, err := pool.Acquire(ctx)
 	if err != nil {
-		return fmt.Errorf("acquire policy database connection")
+		return fmt.Errorf("acquire policy database validation connection")
 	}
-	defer conn.Release()
-	var readOnly string
-	if err = conn.QueryRow(ctx, "SHOW default_transaction_read_only").Scan(&readOnly); err != nil || readOnly != "on" {
-		return fmt.Errorf("verify policy database read-only session")
-	}
-	for name, statement := range map[string]string{"truster_client_exists": cfg.Queries.ClientExists, "truster_user_access": cfg.Queries.UserAccess, "truster_trust_bindings": cfg.Queries.TrustBindings} {
-		if _, err = conn.Conn().Prepare(ctx, name, statement); err != nil {
+	defer connection.Release()
+	for _, statement := range []string{cfg.Queries.ClientExists, cfg.Queries.UserAccess, cfg.Queries.TrustBindings} {
+		if _, err = connection.Conn().Prepare(ctx, "", statement); err != nil {
 			return fmt.Errorf("prepare policy database query")
 		}
 	}

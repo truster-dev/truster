@@ -64,22 +64,22 @@ func (s *Store) CreateOTP(challengeID, email, code string, flow OTPFlow, secret 
 	}
 	defer func() { _ = tx.Rollback() }()
 	if s.postgresql {
-		if _, err = tx.Exec(`SELECT pg_advisory_xact_lock(hashtextextended(?,0))`, email); err != nil {
+		if _, err = tx.Exec(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, email); err != nil {
 			return time.Time{}, fmt.Errorf("lock OTP quota: %w", err)
 		}
 	}
 	var count int
-	if err = tx.QueryRow(`SELECT count(*) FROM otp_sends WHERE email=? AND sent_at>?`, email, now.Add(-time.Hour)).Scan(&count); err != nil {
+	if err = tx.QueryRow(`SELECT count(*) FROM {{state}}otp_sends WHERE email=$1 AND sent_at>$2`, email, now.Add(-time.Hour)).Scan(&count); err != nil {
 		return time.Time{}, err
 	}
 	if count >= 5 {
 		return time.Time{}, fmt.Errorf("email send limit exceeded")
 	}
-	_, err = tx.Exec(`INSERT INTO otp_challenges(challenge_id,email,code_hmac,context,created_at,sent_at,expires_at) VALUES(?,?,?,?,?,?,?)`, challengeID, email, otpMAC(secret, challengeID, code), context, now, now, expiresAt)
+	_, err = tx.Exec(`INSERT INTO {{state}}otp_challenges(challenge_id,email,code_hmac,context,created_at,sent_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7)`, challengeID, email, otpMAC(secret, challengeID, code), context, now, now, expiresAt)
 	if err != nil {
 		return time.Time{}, err
 	}
-	if _, err = tx.Exec(`INSERT INTO otp_sends(email,sent_at) VALUES(?,?)`, email, now); err != nil {
+	if _, err = tx.Exec(`INSERT INTO {{state}}otp_sends(email,sent_at) VALUES($1,$2)`, email, now); err != nil {
 		return time.Time{}, err
 	}
 	return expiresAt, tx.Commit()
@@ -96,7 +96,7 @@ func (s *Store) ResendOTP(challengeID, code string, secret []byte, now time.Time
 	var email string
 	var context []byte
 	var sentAt, expiresAt time.Time
-	if err = tx.QueryRow(`SELECT email,context,sent_at,expires_at FROM otp_challenges WHERE challenge_id=?`+s.lockRows(), challengeID).Scan(&email, &context, &sentAt, &expiresAt); err != nil {
+	if err = tx.QueryRow(`SELECT email,context,sent_at,expires_at FROM {{state}}otp_challenges WHERE challenge_id=$1`+s.lockRows(), challengeID).Scan(&email, &context, &sentAt, &expiresAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return OTPFlow{}, time.Time{}, &OTPResendError{}
 		}
@@ -113,23 +113,23 @@ func (s *Store) ResendOTP(challengeID, code string, secret []byte, now time.Time
 		return flow, time.Time{}, &OTPResendError{RetryAfter: retryAfter}
 	}
 	if s.postgresql {
-		if _, err = tx.Exec(`SELECT pg_advisory_xact_lock(hashtextextended(?,0))`, email); err != nil {
+		if _, err = tx.Exec(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, email); err != nil {
 			return OTPFlow{}, time.Time{}, fmt.Errorf("lock OTP quota: %w", err)
 		}
 	}
 	var count int
-	if err = tx.QueryRow(`SELECT count(*) FROM otp_sends WHERE email=? AND sent_at>?`, email, now.Add(-time.Hour)).Scan(&count); err != nil {
+	if err = tx.QueryRow(`SELECT count(*) FROM {{state}}otp_sends WHERE email=$1 AND sent_at>$2`, email, now.Add(-time.Hour)).Scan(&count); err != nil {
 		return OTPFlow{}, time.Time{}, err
 	}
 	if count >= 5 {
 		var oldest time.Time
-		if err = tx.QueryRow(`SELECT sent_at FROM otp_sends WHERE email=? AND sent_at>? ORDER BY sent_at LIMIT 1`, email, now.Add(-time.Hour)).Scan(&oldest); err != nil {
+		if err = tx.QueryRow(`SELECT sent_at FROM {{state}}otp_sends WHERE email=$1 AND sent_at>$2 ORDER BY sent_at LIMIT 1`, email, now.Add(-time.Hour)).Scan(&oldest); err != nil {
 			return OTPFlow{}, time.Time{}, err
 		}
 		return flow, time.Time{}, &OTPResendError{RetryAfter: oldest.Add(time.Hour).Sub(now)}
 	}
 	newExpiresAt := now.Add(ttl)
-	result, err := tx.Exec(`UPDATE otp_challenges SET code_hmac=?,attempts=0,sends=sends+1,sent_at=?,expires_at=? WHERE challenge_id=? AND sent_at=? AND expires_at>?`, otpMAC(secret, challengeID, code), now, newExpiresAt, challengeID, sentAt, now)
+	result, err := tx.Exec(`UPDATE {{state}}otp_challenges SET code_hmac=$1,attempts=0,sends=sends+1,sent_at=$2,expires_at=$3 WHERE challenge_id=$4 AND sent_at=$5 AND expires_at>$6`, otpMAC(secret, challengeID, code), now, newExpiresAt, challengeID, sentAt, now)
 	if err != nil {
 		return OTPFlow{}, time.Time{}, err
 	}
@@ -139,7 +139,7 @@ func (s *Store) ResendOTP(challengeID, code string, secret []byte, now time.Time
 		}
 		return flow, time.Time{}, &OTPResendError{RetryAfter: time.Minute}
 	}
-	if _, err = tx.Exec(`INSERT INTO otp_sends(email,sent_at) VALUES(?,?)`, email, now); err != nil {
+	if _, err = tx.Exec(`INSERT INTO {{state}}otp_sends(email,sent_at) VALUES($1,$2)`, email, now); err != nil {
 		return OTPFlow{}, time.Time{}, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -151,7 +151,7 @@ func (s *Store) ResendOTP(challengeID, code string, secret []byte, now time.Time
 // OTPFlow retrieves the authorization context for an active challenge.
 func (s *Store) OTPFlow(challengeID string) (OTPFlow, error) {
 	var raw []byte
-	if err := s.db.QueryRow(`SELECT context FROM otp_challenges WHERE challenge_id=?`, challengeID).Scan(&raw); err != nil {
+	if err := s.db.QueryRow(`SELECT context FROM {{state}}otp_challenges WHERE challenge_id=$1`, challengeID).Scan(&raw); err != nil {
 		return OTPFlow{}, fmt.Errorf("invalid challenge")
 	}
 	var flow OTPFlow
@@ -172,14 +172,14 @@ func (s *Store) ConsumeOTP(challengeID, code string, secret []byte, now time.Tim
 	var context []byte
 	var attempts int
 	var expires time.Time
-	if err = tx.QueryRow(`SELECT code_hmac,context,attempts,expires_at FROM otp_challenges WHERE challenge_id=?`+s.lockRows(), challengeID).Scan(&mac, &context, &attempts, &expires); err != nil {
+	if err = tx.QueryRow(`SELECT code_hmac,context,attempts,expires_at FROM {{state}}otp_challenges WHERE challenge_id=$1`+s.lockRows(), challengeID).Scan(&mac, &context, &attempts, &expires); err != nil {
 		return OTPFlow{}, fmt.Errorf("invalid challenge")
 	}
 	if !now.Before(expires) || attempts >= 5 {
 		return OTPFlow{}, fmt.Errorf("invalid challenge")
 	}
 	if !hmac.Equal(mac, otpMAC(secret, challengeID, code)) {
-		result, updateErr := tx.Exec(`UPDATE otp_challenges SET attempts=attempts+1 WHERE challenge_id=? AND attempts=?`, challengeID, attempts)
+		result, updateErr := tx.Exec(`UPDATE {{state}}otp_challenges SET attempts=attempts+1 WHERE challenge_id=$1 AND attempts=$2`, challengeID, attempts)
 		if updateErr != nil {
 			return OTPFlow{}, updateErr
 		}
@@ -191,7 +191,7 @@ func (s *Store) ConsumeOTP(challengeID, code string, secret []byte, now time.Tim
 		}
 		return OTPFlow{}, fmt.Errorf("invalid code")
 	}
-	result, err := tx.Exec(`DELETE FROM otp_challenges WHERE challenge_id=? AND attempts=?`, challengeID, attempts)
+	result, err := tx.Exec(`DELETE FROM {{state}}otp_challenges WHERE challenge_id=$1 AND attempts=$2`, challengeID, attempts)
 	if err != nil {
 		return OTPFlow{}, err
 	}

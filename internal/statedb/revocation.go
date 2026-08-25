@@ -30,9 +30,9 @@ func (s *Store) RevokeCredential(credential RevocationCredential, clientID, proo
 	var tokenExpiry, idleExpiry, absoluteExpiry time.Time
 	var consumed, revoked sql.NullTime
 	if credential.Refresh != nil {
-		err = tx.QueryRow(`SELECT g.sid,COALESCE(g.dpop_jkt,''),t.expires_at,g.idle_expires_at,g.absolute_expires_at,t.consumed_at,g.revoked_at FROM refresh_tokens t JOIN refresh_grants g ON g.sid=t.sid WHERE t.handle_hash=? AND t.token_hash=? AND g.client_id=?`+s.lockJoinedRows(), credential.Refresh.HandleHash[:], credential.Refresh.TokenHash[:], clientID).Scan(&sid, &grantJKT, &tokenExpiry, &idleExpiry, &absoluteExpiry, &consumed, &revoked)
+		err = tx.QueryRow(`SELECT g.sid,COALESCE(g.dpop_jkt,''),t.expires_at,g.idle_expires_at,g.absolute_expires_at,t.consumed_at,g.revoked_at FROM {{state}}refresh_tokens t JOIN {{state}}refresh_grants g ON g.sid=t.sid WHERE t.handle_hash=$1 AND t.token_hash=$2 AND g.client_id=$3`+s.lockJoinedRows(), credential.Refresh.HandleHash[:], credential.Refresh.TokenHash[:], clientID).Scan(&sid, &grantJKT, &tokenExpiry, &idleExpiry, &absoluteExpiry, &consumed, &revoked)
 	} else if credential.SID != "" {
-		err = tx.QueryRow(`SELECT sid,COALESCE(dpop_jkt,''),idle_expires_at,absolute_expires_at,revoked_at FROM refresh_grants WHERE sid=? AND client_id=?`+s.lockRows(), credential.SID, clientID).Scan(&sid, &grantJKT, &idleExpiry, &absoluteExpiry, &revoked)
+		err = tx.QueryRow(`SELECT sid,COALESCE(dpop_jkt,''),idle_expires_at,absolute_expires_at,revoked_at FROM {{state}}refresh_grants WHERE sid=$1 AND client_id=$2`+s.lockRows(), credential.SID, clientID).Scan(&sid, &grantJKT, &idleExpiry, &absoluteExpiry, &revoked)
 	} else {
 		err = sql.ErrNoRows
 	}
@@ -48,7 +48,7 @@ func (s *Store) RevokeCredential(credential RevocationCredential, clientID, proo
 			matches = credential.Refresh != nil || !credential.RequireTokenBinding || credential.TokenJKT == grantJKT
 		}
 		if matches {
-			if _, err = tx.Exec(`UPDATE refresh_grants SET revoked_at=?,revoke_reason=? WHERE sid=? AND revoked_at IS NULL`, now, reason, sid); err != nil {
+			if _, err = tx.Exec(`UPDATE {{state}}refresh_grants SET revoked_at=$1,revoke_reason=$2 WHERE sid=$3 AND revoked_at IS NULL`, now, reason, sid); err != nil {
 				return fmt.Errorf("revoke credential grant: %w", err)
 			}
 		}

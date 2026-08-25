@@ -11,10 +11,10 @@ import (
 	"log/slog"
 	"net"
 	"net/url"
-	"strings"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
 const schemaVersion = 1
@@ -24,30 +24,15 @@ func NewPostgreSQL(ctx context.Context, connectionString string, maxConnections 
 	if queryTimeout <= 0 {
 		return nil, fmt.Errorf("PostgreSQL state database query timeout must be positive")
 	}
-	statementTimeout := queryTimeout.Milliseconds()
-	if statementTimeout < 1 {
-		statementTimeout = 1
-	}
 	if err := validatePostgreSQLTLS(connectionString); err != nil {
 		return nil, err
 	}
-	u, err := url.Parse(connectionString)
+	connConfig, err := pgx.ParseConfig(connectionString)
 	if err != nil {
 		return nil, fmt.Errorf("parse PostgreSQL state database connection string: %w", err)
 	}
-	parameters := u.Query()
-	options := strings.TrimSpace(parameters.Get("options"))
-	if options != "" {
-		options += " "
-	}
-	parameters.Set("options", options+fmt.Sprintf("-c statement_timeout=%d -c search_path=truster_state,public", statementTimeout))
-	parameters.Set("statement_timeout", fmt.Sprintf("%d", statementTimeout))
-	parameters.Set("search_path", "truster_state,public")
-	u.RawQuery = parameters.Encode()
-	db, err := sql.Open("pgx", u.String())
-	if err != nil {
-		return nil, fmt.Errorf("open PostgreSQL state database: %w", err)
-	}
+	connConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
+	db := stdlib.OpenDB(*connConfig)
 	db.SetMaxOpenConns(maxConnections)
 	db.SetMaxIdleConns(maxConnections)
 	startup, cancel := context.WithTimeout(ctx, queryTimeout)
@@ -115,7 +100,7 @@ func CheckRuntime(ctx context.Context, db interface {
 			AND has_table_privilege(current_user,format('%I.%I',schemaname,tablename),'UPDATE')
 			AND has_table_privilege(current_user,format('%I.%I',schemaname,tablename),'DELETE')
 		),false)
-		FROM pg_tables WHERE schemaname='truster_state'`).Scan(&allowed)
+		FROM pg_catalog.pg_tables WHERE schemaname='truster_state'`).Scan(&allowed)
 	if err != nil {
 		return fmt.Errorf("check state database runtime privileges: %w", err)
 	}
@@ -123,7 +108,7 @@ func CheckRuntime(ctx context.Context, db interface {
 		return fmt.Errorf("state database runtime privileges are incomplete")
 	}
 	var count int
-	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM oauth_states WHERE false`).Scan(&count); err != nil {
+	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM truster_state.oauth_states WHERE false`).Scan(&count); err != nil {
 		return fmt.Errorf("check state database runtime schema: %w", err)
 	}
 	return nil

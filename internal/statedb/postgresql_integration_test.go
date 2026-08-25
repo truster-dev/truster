@@ -22,31 +22,42 @@ import (
 // postgreSQLStores opens two independent pools against the opt-in integration database.
 func postgreSQLStores(t testing.TB) (*Store, *Store) {
 	t.Helper()
-	dsn := os.Getenv("TRUSTER_STATE_TEST_DB_URL")
-	if dsn == "" {
-		t.Skip("TRUSTER_STATE_TEST_DB_URL is not set")
-	}
-	if err := MigratePostgreSQL(dsn); err != nil {
+	directDSN, pgBouncerDSN := postgreSQLTestURLs(t)
+	if err := MigratePostgreSQL(directDSN); err != nil {
 		t.Fatalf("migrate PostgreSQL: %v", err)
 	}
-	if err := MigratePostgreSQL(dsn); err != nil {
+	if err := MigratePostgreSQL(directDSN); err != nil {
 		t.Fatalf("repeat PostgreSQL migration: %v", err)
 	}
-	if err := resetPostgreSQLState(dsn); err != nil {
+	if err := resetPostgreSQLState(directDSN); err != nil {
 		t.Fatalf("reset PostgreSQL state: %v", err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	a, err := NewPostgreSQL(context.Background(), dsn, 8, 5*time.Second, logger)
+	a, err := NewPostgreSQL(context.Background(), pgBouncerDSN, 8, 5*time.Second, logger)
 	if err != nil {
 		t.Fatalf("open first PostgreSQL pool: %v", err)
 	}
-	b, err := NewPostgreSQL(context.Background(), dsn, 8, 5*time.Second, logger)
+	b, err := NewPostgreSQL(context.Background(), pgBouncerDSN, 8, 5*time.Second, logger)
 	if err != nil {
 		_ = a.Close()
 		t.Fatalf("open second PostgreSQL pool: %v", err)
 	}
 	t.Cleanup(func() { _ = b.Close(); _ = a.Close() })
 	return a, b
+}
+
+// postgreSQLTestURLs returns separate direct and optional PgBouncer endpoints.
+func postgreSQLTestURLs(t testing.TB) (string, string) {
+	t.Helper()
+	directDSN := os.Getenv("TRUSTER_STATE_TEST_DIRECT_DB_URL")
+	if directDSN == "" {
+		t.Skip("TRUSTER_STATE_TEST_DIRECT_DB_URL is not set")
+	}
+	pgBouncerDSN := os.Getenv("TRUSTER_STATE_TEST_PGBOUNCER_DB_URL")
+	if pgBouncerDSN == "" {
+		pgBouncerDSN = directDSN
+	}
+	return directDSN, pgBouncerDSN
 }
 
 // resetPostgreSQLState removes state owned by prior integration-test runs.
@@ -77,14 +88,14 @@ func resetPostgreSQLState(dsn string) error {
 	return tx.Commit()
 }
 
-// TestPostgreSQLPlaceholderBinding verifies application SQL is rebound without a driver wrapper.
-func TestPostgreSQLPlaceholderBinding(t *testing.T) {
+// TestStateSchemaBinding verifies shared SQL retains its native numbered parameters.
+func TestStateSchemaBinding(t *testing.T) {
 	db := &database{postgresql: true}
-	if got, want := db.bind("SELECT ?, ?, ?"), "SELECT $1, $2, $3"; got != want {
-		t.Fatalf("bind = %q, want %q", got, want)
+	if got, want := db.stateSQL("SELECT $1 FROM {{state}}oauth_states"), "SELECT $1 FROM truster_state.oauth_states"; got != want {
+		t.Fatalf("PostgreSQL state SQL = %q, want %q", got, want)
 	}
-	if got, want := (&database{}).bind("SELECT ?"), "SELECT ?"; got != want {
-		t.Fatalf("SQLite bind = %q, want %q", got, want)
+	if got, want := (&database{}).stateSQL("SELECT $1 FROM {{state}}oauth_states"), "SELECT $1 FROM oauth_states"; got != want {
+		t.Fatalf("SQLite state SQL = %q, want %q", got, want)
 	}
 }
 
@@ -190,7 +201,7 @@ func TestPostgreSQLGrantActionConsumeRace(t *testing.T) {
 		t.Fatal(err)
 	}
 	var actionCount int
-	if err := a.db.QueryRow(`SELECT count(*) FROM grant_actions WHERE sid=?`, grant.SID).Scan(&actionCount); err != nil || actionCount != len(actions) {
+	if err := a.db.QueryRow(`SELECT count(*) FROM {{state}}grant_actions WHERE sid=$1`, grant.SID).Scan(&actionCount); err != nil || actionCount != len(actions) {
 		t.Fatalf("stored actions = %d, want %d: %v", actionCount, len(actions), err)
 	}
 	errs := make(chan error, 2)
@@ -278,14 +289,14 @@ func TestPostgreSQLSchemaRejection(t *testing.T) {
 		dirty   bool
 	}{{"dirty", schemaVersion, true}, {"older", 0, false}, {"newer", schemaVersion + 1, false}} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := a.db.Exec(`UPDATE public.schema_migrations SET version=?, dirty=?`, tc.version, tc.dirty); err != nil {
+			if _, err := a.db.Exec(`UPDATE public.schema_migrations SET version=$1, dirty=$2`, tc.version, tc.dirty); err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { _, _ = a.db.Exec(`UPDATE public.schema_migrations SET version=?, dirty=false`, schemaVersion) })
+			t.Cleanup(func() { _, _ = a.db.Exec(`UPDATE public.schema_migrations SET version=$1, dirty=false`, schemaVersion) })
 			if err := CheckSchema(context.Background(), a.db); err == nil {
 				t.Fatal("incompatible schema was accepted")
 			}
-			if _, err := a.db.Exec(`UPDATE public.schema_migrations SET version=?, dirty=false`, schemaVersion); err != nil {
+			if _, err := a.db.Exec(`UPDATE public.schema_migrations SET version=$1, dirty=false`, schemaVersion); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -295,7 +306,7 @@ func TestPostgreSQLSchemaRejection(t *testing.T) {
 // TestPostgreSQLConcurrentNoOpMigrate verifies migration locking after the schema is current.
 func TestPostgreSQLConcurrentNoOpMigrate(t *testing.T) {
 	postgreSQLStores(t)
-	dsn := os.Getenv("TRUSTER_STATE_TEST_DB_URL")
+	dsn := os.Getenv("TRUSTER_STATE_TEST_DIRECT_DB_URL")
 	errs := make(chan error, 8)
 	for range 8 {
 		go func() { errs <- MigratePostgreSQL(dsn) }()
@@ -310,7 +321,7 @@ func TestPostgreSQLConcurrentNoOpMigrate(t *testing.T) {
 // TestPostgreSQLPoolTimeoutAndReadiness verifies bounded waits when the only connection is exhausted.
 func TestPostgreSQLPoolTimeoutAndReadiness(t *testing.T) {
 	postgreSQLStores(t)
-	dsn := os.Getenv("TRUSTER_STATE_TEST_DB_URL")
+	_, dsn := postgreSQLTestURLs(t)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	store, err := NewPostgreSQL(context.Background(), dsn, 1, 50*time.Millisecond, logger)
 	if err != nil {
@@ -350,7 +361,7 @@ func TestPostgreSQLPoolTimeoutAndReadiness(t *testing.T) {
 		t.Fatalf("readiness after release: %v", err)
 	}
 	if err = store.db.QueryRow(`SELECT pg_sleep(1)`).Scan(new(any)); err == nil {
-		t.Fatal("query exceeded statement timeout")
+		t.Fatal("query exceeded context timeout")
 	}
 	closeStore, err := NewPostgreSQL(context.Background(), dsn, 1, 5*time.Second, logger)
 	if err != nil {
@@ -381,18 +392,17 @@ func TestPostgreSQLPoolTimeoutAndReadiness(t *testing.T) {
 	_ = closeConn.Close()
 }
 
-// TestPostgreSQLRuntimeParametersOverrideDSN verifies authoritative state GUCs and preserved unrelated options.
-func TestPostgreSQLRuntimeParametersOverrideDSN(t *testing.T) {
+// TestPostgreSQLRuntimeIsSearchPathIndependent verifies state SQL without an application-owned session setting.
+func TestPostgreSQLRuntimeIsSearchPathIndependent(t *testing.T) {
 	postgreSQLStores(t)
-	dsn := os.Getenv("TRUSTER_STATE_TEST_DB_URL")
+	dsn, _ := postgreSQLTestURLs(t)
 	u, err := url.Parse(dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
 	parameters := u.Query()
 	parameters.Set("search_path", "public")
-	parameters.Set("statement_timeout", "30s")
-	parameters.Set("options", "-c application_name=truster-guc-test -c search_path=public -c statement_timeout=30s")
+	parameters.Set("application_name", "truster-guc-test")
 	u.RawQuery = parameters.Encode()
 	store, err := NewPostgreSQL(context.Background(), u.String(), 2, 50*time.Millisecond, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
@@ -403,7 +413,7 @@ func TestPostgreSQLRuntimeParametersOverrideDSN(t *testing.T) {
 	if err = store.db.QueryRow(`SELECT current_setting('search_path'),current_setting('application_name')`).Scan(&searchPath, &applicationName); err != nil {
 		t.Fatal(err)
 	}
-	if searchPath != "truster_state,public" || applicationName != "truster-guc-test" {
+	if searchPath != "public" || applicationName != "truster-guc-test" {
 		t.Fatalf("runtime settings search_path=%q application_name=%q", searchPath, applicationName)
 	}
 	now := time.Now().UTC()
@@ -415,14 +425,14 @@ func TestPostgreSQLRuntimeParametersOverrideDSN(t *testing.T) {
 		t.Fatalf("state schema write count=%d err=%v", count, err)
 	}
 	if err = store.db.QueryRow(`SELECT pg_sleep(1)`).Scan(new(any)); err == nil {
-		t.Fatal("conflicting DSN disabled statement timeout")
+		t.Fatal("query exceeded context timeout")
 	}
 }
 
 // TestPostgreSQLMigrationMetadataIsForcedPublic verifies conflicting migration parameters cannot relocate metadata.
 func TestPostgreSQLMigrationMetadataIsForcedPublic(t *testing.T) {
 	postgreSQLStores(t)
-	dsn := os.Getenv("TRUSTER_STATE_TEST_DB_URL")
+	dsn := os.Getenv("TRUSTER_STATE_TEST_DIRECT_DB_URL")
 	u, err := url.Parse(dsn)
 	if err != nil {
 		t.Fatal(err)
@@ -468,7 +478,7 @@ func TestPostgreSQLRuntimeRequiresAllPrivileges(t *testing.T) {
 		GRANT SELECT ON ALL TABLES IN SCHEMA truster_state TO ` + role); err != nil {
 		t.Fatal(err)
 	}
-	u, err := url.Parse(os.Getenv("TRUSTER_STATE_TEST_DB_URL"))
+	u, err := url.Parse(os.Getenv("TRUSTER_STATE_TEST_DIRECT_DB_URL"))
 	if err != nil {
 		t.Fatal(err)
 	}

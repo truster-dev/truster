@@ -125,7 +125,7 @@ make test-postgresql
 The equivalent explicit command is:
 
 ```bash
-TRUSTER_STATE_TEST_DB_URL='postgresql://truster:truster@127.0.0.1:55435/truster_state?sslmode=disable' \
+TRUSTER_STATE_TEST_DIRECT_DB_URL='postgresql://truster:truster@127.0.0.1:55435/truster_state?sslmode=disable' \
   go test -v -race ./internal/statedb -run PostgreSQL
 ```
 
@@ -133,7 +133,7 @@ Run the opt-in representative state-operation benchmarks against the same real
 PostgreSQL database (the benchmark resets only `truster_state`):
 
 ```bash
-TRUSTER_STATE_TEST_DB_URL='postgresql://truster:truster@127.0.0.1:55435/truster_state?sslmode=disable' \
+TRUSTER_STATE_TEST_DIRECT_DB_URL='postgresql://truster:truster@127.0.0.1:55435/truster_state?sslmode=disable' \
   go test ./internal/statedb -run '^$' -bench '^BenchmarkPostgreSQL' -benchmem
 ```
 

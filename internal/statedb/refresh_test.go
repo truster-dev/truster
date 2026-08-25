@@ -143,7 +143,7 @@ func TestCompleteClaimedRefreshRechecksExpiry(t *testing.T) {
 func TestSQLiteForeignKeysApplyToPooledConnections(t *testing.T) {
 	store := otpStore(t)
 	for i := 0; i < 12; i++ {
-		if _, err := store.db.Exec(`INSERT INTO refresh_tokens(handle_hash,token_hash,sid,issued_at,expires_at) VALUES(?,?,?,?,?)`, []byte{byte(i)}, []byte{byte(i)}, "missing", time.Now(), time.Now().Add(time.Hour)); err == nil {
+		if _, err := store.db.Exec(`INSERT INTO refresh_tokens(handle_hash,token_hash,sid,issued_at,expires_at) VALUES($1,$2,$3,$4,$5)`, []byte{byte(i)}, []byte{byte(i)}, "missing", time.Now(), time.Now().Add(time.Hour)); err == nil {
 			t.Fatal("foreign key violation unexpectedly succeeded")
 		}
 	}
@@ -399,7 +399,7 @@ func TestRefreshCrashRestartBoundaries(t *testing.T) {
 		crash(t, "after-commit", path, current, replacement, now)
 		store := open(t, path)
 		var clean int
-		if err = store.db.QueryRow(`SELECT COUNT(*) FROM refresh_grants WHERE sid=? AND claim_id IS NULL AND claim_expires_at IS NULL AND upstream_refresh_started=0`, grant.SID).Scan(&clean); err != nil {
+		if err = store.db.QueryRow(`SELECT COUNT(*) FROM refresh_grants WHERE sid=$1 AND claim_id IS NULL AND claim_expires_at IS NULL AND upstream_refresh_started=0`, grant.SID).Scan(&clean); err != nil {
 			t.Fatal(err)
 		}
 		if clean != 1 {

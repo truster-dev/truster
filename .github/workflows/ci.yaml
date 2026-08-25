@@ -58,11 +58,42 @@ jobs:
           go install github.com/yannh/kubeconform/cmd/kubeconform@v0.7.0
           make helm-validate
 
+      - name: Start transaction-mode PgBouncer
+        run: |
+          cat > "$RUNNER_TEMP/pgbouncer.ini" <<'EOF'
+          [databases]
+          truster_test = host=host.docker.internal port=5432 dbname=truster_test
+
+          [pgbouncer]
+          listen_addr = 0.0.0.0
+          listen_port = 6432
+          pool_mode = transaction
+          max_prepared_statements = 0
+          auth_type = scram-sha-256
+          auth_file = /etc/pgbouncer/userlist.txt
+          auth_user = truster_test
+          EOF
+          printf '%s\n' '"truster_test" "truster_test"' > "$RUNNER_TEMP/pgbouncer-userlist.txt"
+          docker run -d --name truster-ci-pgbouncer \
+            --add-host=host.docker.internal:host-gateway \
+            -p 6432:6432 \
+            -v "$RUNNER_TEMP/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro" \
+            -v "$RUNNER_TEMP/pgbouncer-userlist.txt:/etc/pgbouncer/userlist.txt:ro" \
+            ghcr.io/cloudnative-pg/pgbouncer@sha256:fd6ce6214390a2ff90bde014c6e5bfa64c99fcca6b0bdd53a63be4865ee5b5ac
+          for i in $(seq 1 30); do
+            docker exec truster-ci-pgbouncer pg_isready -h 127.0.0.1 -p 6432 -U truster_test -d truster_test && exit 0
+            sleep 1
+          done
+          docker logs truster-ci-pgbouncer
+          exit 1
+
       - name: Test
         run: make test
         env:
-          TRUSTER_STATE_TEST_DB_URL: postgresql://truster_test:truster_test@localhost:5432/truster_test?sslmode=disable
-          TRUSTER_POLICY_TEST_DB_URL: postgresql://truster_test:truster_test@localhost:5432/truster_test?sslmode=disable
+          TRUSTER_STATE_TEST_DIRECT_DB_URL: postgresql://truster_test:truster_test@localhost:5432/truster_test?sslmode=disable
+          TRUSTER_STATE_TEST_PGBOUNCER_DB_URL: postgresql://truster_test:truster_test@localhost:6432/truster_test?sslmode=disable
+          TRUSTER_POLICY_TEST_DIRECT_DB_URL: postgresql://truster_test:truster_test@localhost:5432/truster_test?sslmode=disable
+          TRUSTER_POLICY_TEST_PGBOUNCER_DB_URL: postgresql://truster_test:truster_test@localhost:6432/truster_test?sslmode=disable
 
       - name: Upload coverage
         uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.5

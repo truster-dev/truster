@@ -55,6 +55,14 @@ truster migrate --config config.jsonc
 Migrations are forward-only. Truster refuses to start when the schema is
 missing, dirty, older, or newer than the binary expects.
 
+When using transaction-mode PgBouncer, point the runtime
+`connection_string_secret` at PgBouncer and the migration-only secret directly
+at PostgreSQL. Do not run migrations through PgBouncer: schema changes can be
+long-running and should retain a direct connection. Runtime state queries are
+schema-qualified and do not depend on session settings or persistent prepared
+statements, so transactions, row locks, and transaction advisory locks remain
+safe through transaction pooling.
+
 DPoP replay hashes are not protocol state and are not written to this database. Each
 process keeps an independent bounded in-memory cache for the 15-second proof acceptance
 window. Replays reaching the same process are rejected; detection across replicas is
@@ -95,8 +103,11 @@ the application VM should not hold the more privileged migration credential.
 
 - Require certificate-verified TLS. Plaintext connections are accepted only on
   loopback addresses for development.
-- Set `max_connections` per replica so their combined pools remain below the
-  PostgreSQL limit, with capacity left for migrations and administration.
+- With direct connections, set `max_connections` per replica so their combined
+  pools remain below the PostgreSQL limit. With PgBouncer, keep the combined
+  application pools below its client limit and size its server pool for measured
+  database concurrency. In either case, reserve direct capacity for migrations
+  and administration.
 - Choose a `query_timeout` that covers expected database latency. It bounds pool
   waits and queries; an unavailable or exhausted database fails readiness.
 - Give every replica the same issuer, signing key, encryption key, OTP secret,

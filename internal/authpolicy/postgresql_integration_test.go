@@ -23,14 +23,18 @@ import (
 
 // TestPostgreSQLIntegration verifies production pgx startup, decoding, strict contracts, and failures.
 func TestPostgreSQLIntegration(t *testing.T) {
-	url := os.Getenv("TRUSTER_POLICY_TEST_DB_URL")
-	if url == "" {
-		t.Skip("TRUSTER_POLICY_TEST_DB_URL is not set")
+	directURL := os.Getenv("TRUSTER_POLICY_TEST_DIRECT_DB_URL")
+	if directURL == "" {
+		t.Skip("TRUSTER_POLICY_TEST_DIRECT_DB_URL is not set")
 	}
-	t.Log("TRUSTER_POLICY_TEST_DB_URL is set; running PostgreSQL integration coverage")
+	pgBouncerURL := os.Getenv("TRUSTER_POLICY_TEST_PGBOUNCER_DB_URL")
+	if pgBouncerURL == "" {
+		pgBouncerURL = directURL
+	}
+	t.Log("TRUSTER_POLICY_TEST_DIRECT_DB_URL is set; running PostgreSQL integration coverage")
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	admin, err := pgxpool.New(ctx, url)
+	admin, err := pgxpool.New(ctx, directURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,53 +45,35 @@ func TestPostgreSQLIntegration(t *testing.T) {
 	}
 	role := fmt.Sprintf("auth_reader_%d", time.Now().UnixNano())
 	roleSQL := pgx.Identifier{role}.Sanitize()
-	if _, err = admin.Exec(ctx, `CREATE ROLE `+roleSQL+` LOGIN PASSWORD 'auth_test_reader'; GRANT USAGE ON SCHEMA `+schema+` TO `+roleSQL+`; GRANT SELECT ON ALL TABLES IN SCHEMA `+schema+` TO `+roleSQL+`; ALTER ROLE `+roleSQL+` SET default_transaction_read_only = on`); err != nil {
+	if _, err = admin.Exec(ctx, `CREATE ROLE `+roleSQL+` LOGIN PASSWORD 'auth_test_reader'; GRANT USAGE ON SCHEMA `+schema+` TO `+roleSQL+`; GRANT SELECT ON ALL TABLES IN SCHEMA `+schema+` TO `+roleSQL); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		_, _ = admin.Exec(context.Background(), `DROP SCHEMA IF EXISTS `+schema+` CASCADE`)
 		_, _ = admin.Exec(context.Background(), `DROP ROLE IF EXISTS `+roleSQL)
 	})
-	restrictedConfig, err := pgxpool.ParseConfig(url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	restrictedConfig.ConnConfig.User = role
-	restrictedConfig.ConnConfig.Password = "auth_test_reader"
-	_ = restrictedConfig.ConnString()
-	parsedRestrictedURL, err := neturl.Parse(url)
+	parsedRestrictedURL, err := neturl.Parse(pgBouncerURL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	parsedRestrictedURL.User = neturl.UserPassword(role, "auth_test_reader")
 	restrictedURL := parsedRestrictedURL.String()
-	probeConfig, err := pgxpool.ParseConfig(restrictedURL)
+	writeConfig, err := pgx.ParseConfig(restrictedURL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	probeConfig.MaxConns = 2
-	probe, err := pgxpool.NewWithConfig(ctx, probeConfig)
+	writeConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
+	writeProbe, err := pgx.ConnectConfig(ctx, writeConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := probe.Acquire(ctx)
-	if err != nil {
+	if _, err = writeProbe.Exec(ctx, `DELETE FROM `+schema+`.clients`); err == nil {
+		_ = writeProbe.Close(ctx)
+		t.Fatal("policy role unexpectedly modified policy data")
+	}
+	if err = writeProbe.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
-	second, err := probe.Acquire(ctx)
-	if err != nil {
-		first.Release()
-		t.Fatal(err)
-	}
-	for _, connection := range []*pgxpool.Conn{first, second} {
-		var readOnly string
-		if err = connection.QueryRow(ctx, "SHOW default_transaction_read_only").Scan(&readOnly); err != nil || readOnly != "on" {
-			t.Fatalf("restricted connection read-only=%q error=%v", readOnly, err)
-		}
-	}
-	second.Release()
-	first.Release()
-	probe.Close()
 	cfg := testConfig()
 	cfg.MaxConnections = 2
 	cfg.Queries = config.PolicyQueries{

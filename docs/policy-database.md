@@ -64,11 +64,11 @@ CREATE ROLE truster_policy LOGIN PASSWORD 'managed-outside-SQL';
 GRANT CONNECT ON DATABASE application TO truster_policy;
 GRANT USAGE ON SCHEMA truster_policy TO truster_policy;
 GRANT SELECT ON ALL TABLES IN SCHEMA truster_policy TO truster_policy;
-ALTER ROLE truster_policy SET default_transaction_read_only = on;
 ```
 
-Keep this role read-only even though Truster also configures its database
-sessions as read-only.
+These privileges are the read-only boundary: do not grant this role schema
+creation or table write privileges. Apply equivalent restrictions to any
+objects referenced by custom queries.
 
 ### 3. Configure Truster
 
@@ -215,14 +215,12 @@ For remote connections, use strict TLS:
 - Every parsed primary and fallback target is checked. Plaintext connections are
   only accepted for `localhost` or a loopback IP during development.
 
-At startup, Truster loads the connection secret, checks connectivity, verifies
-that the session default is read-only, and prepares all three statements within
-a 10-second initialization deadline. Preparation validates SQL parsing and
-parameter inference, but does not execute the statements or verify result
-aliases, column order, PostgreSQL types, cardinality, or configured result
-limits. Those contracts are enforced every time a query runs. Startup fails if
-connectivity, read-only verification, or preparation fails. The PostgreSQL role
-must still have read-only permissions.
+At startup, Truster loads the connection secret, checks connectivity, and
+prepares all three statements within a 10-second initialization deadline.
+Preparation validates SQL parsing and parameter inference, but does not execute
+the statements or verify result aliases, column order, PostgreSQL types,
+cardinality, or configured result limits. Those contracts are enforced every
+time a query runs. Startup fails if connectivity or preparation fails.
 
 ## Limits and caches
 
@@ -252,6 +250,15 @@ Each policy database query is cancelled if it does not finish within
 `query_timeout`. A timeout is treated as a policy database failure, not a
 denial: Truster fails closed without using stale user or trust data, while
 preserving retryable authorization codes and refresh grants as described below.
+
+Policy queries are compatible with transaction-mode PgBouncer and do not rely
+on session-bound prepared statements. Because transaction pooling may route
+successive queries to different PostgreSQL sessions, custom queries must use
+schema-qualified table names and cannot rely on `search_path`, `SET`, temporary
+tables, or other session state. They must run under a role limited to the
+required `SELECT` privileges. A replica PgBouncer is suitable only when replica
+lag is acceptable for policy changes; use the primary when revocations must take
+effect immediately.
 
 The example schema does not enforce every runtime size limit. Invalid rows may
 therefore be inserted, but Truster fails closed when it reads them.
