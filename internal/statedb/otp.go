@@ -75,7 +75,7 @@ func (s *Store) CreateOTP(challengeID, email, code string, flow OTPFlow, secret 
 	if count >= 5 {
 		return time.Time{}, fmt.Errorf("email send limit exceeded")
 	}
-	_, err = tx.Exec(`INSERT INTO {{state}}otp_challenges(challenge_id,email,code_hmac,context,created_at,sent_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7)`, challengeID, email, otpMAC(secret, challengeID, code), context, now, now, expiresAt)
+	_, err = tx.Exec(`INSERT INTO {{state}}otp_challenges(challenge_id,email,code_hmac,context,created_at,sent_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7)`, challengeID, email, otpMAC(secret, challengeID, code), string(context), now, now, expiresAt)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -173,7 +173,10 @@ func (s *Store) ConsumeOTP(challengeID, code string, secret []byte, now time.Tim
 	var attempts int
 	var expires time.Time
 	if err = tx.QueryRow(`SELECT code_hmac,context,attempts,expires_at FROM {{state}}otp_challenges WHERE challenge_id=$1`+s.lockRows(), challengeID).Scan(&mac, &context, &attempts, &expires); err != nil {
-		return OTPFlow{}, fmt.Errorf("invalid challenge")
+		if errors.Is(err, sql.ErrNoRows) {
+			return OTPFlow{}, fmt.Errorf("invalid challenge")
+		}
+		return OTPFlow{}, fmt.Errorf("load OTP challenge: %w", err)
 	}
 	if !now.Before(expires) || attempts >= 5 {
 		return OTPFlow{}, fmt.Errorf("invalid challenge")
@@ -191,6 +194,10 @@ func (s *Store) ConsumeOTP(challengeID, code string, secret []byte, now time.Tim
 		}
 		return OTPFlow{}, fmt.Errorf("invalid code")
 	}
+	var flow OTPFlow
+	if err = json.Unmarshal(context, &flow); err != nil {
+		return OTPFlow{}, fmt.Errorf("decode OTP flow: %w", err)
+	}
 	result, err := tx.Exec(`DELETE FROM {{state}}otp_challenges WHERE challenge_id=$1 AND attempts=$2`, challengeID, attempts)
 	if err != nil {
 		return OTPFlow{}, err
@@ -200,10 +207,6 @@ func (s *Store) ConsumeOTP(challengeID, code string, secret []byte, now time.Tim
 	}
 	if err = tx.Commit(); err != nil {
 		return OTPFlow{}, err
-	}
-	var flow OTPFlow
-	if err := json.Unmarshal(context, &flow); err != nil {
-		return OTPFlow{}, fmt.Errorf("decode OTP flow: %w", err)
 	}
 	return flow, nil
 }

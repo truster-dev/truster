@@ -165,6 +165,13 @@ func TestPostgreSQLCrossReplicaSemantics(t *testing.T) {
 	}
 
 	secret := []byte("01234567890123456789012345678901")
+	flow := OTPFlow{ConnectorID: "email", Subject: "context@example.com", Email: "context@example.com", ClientID: "client"}
+	if _, err := a.CreateOTP("postgres-context", flow.Email, "87654321", flow, secret, now, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := b.ConsumeOTP("postgres-context", "87654321", secret, now); err != nil || got != flow {
+		t.Fatalf("PostgreSQL OTP context round trip: %#v %v", got, err)
+	}
 	results := make(chan error, 8)
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
