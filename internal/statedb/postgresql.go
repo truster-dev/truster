@@ -17,7 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 )
 
-const schemaVersion = 1
+const schemaVersion = 2
 
 // NewPostgreSQL opens a migrated PostgreSQL state database and verifies its compatibility.
 func NewPostgreSQL(ctx context.Context, connectionString string, maxConnections int, queryTimeout time.Duration, logger *slog.Logger) (*Store, error) {
@@ -93,14 +93,14 @@ func CheckRuntime(ctx context.Context, db interface {
 		return err
 	}
 	var allowed bool
-	err := db.QueryRowContext(ctx, `SELECT has_schema_privilege(current_user,'truster_state','USAGE')
+	err := db.QueryRowContext(ctx, `SELECT has_schema_privilege(current_user,'public','USAGE')
 		AND COALESCE(bool_and(
 			has_table_privilege(current_user,format('%I.%I',schemaname,tablename),'SELECT')
 			AND has_table_privilege(current_user,format('%I.%I',schemaname,tablename),'INSERT')
 			AND has_table_privilege(current_user,format('%I.%I',schemaname,tablename),'UPDATE')
 			AND has_table_privilege(current_user,format('%I.%I',schemaname,tablename),'DELETE')
 		),false)
-		FROM pg_catalog.pg_tables WHERE schemaname='truster_state'`).Scan(&allowed)
+		FROM pg_catalog.pg_tables WHERE schemaname='public' AND tablename<>'schema_migrations'`).Scan(&allowed)
 	if err != nil {
 		return fmt.Errorf("check state database runtime privileges: %w", err)
 	}
@@ -108,7 +108,7 @@ func CheckRuntime(ctx context.Context, db interface {
 		return fmt.Errorf("state database runtime privileges are incomplete")
 	}
 	var count int
-	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM truster_state.oauth_states WHERE false`).Scan(&count); err != nil {
+	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM public.oauth_states WHERE false`).Scan(&count); err != nil {
 		return fmt.Errorf("check state database runtime schema: %w", err)
 	}
 	return nil

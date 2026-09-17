@@ -24,7 +24,7 @@ type database struct {
 func (d *database) stateSQL(query string) string {
 	schema := ""
 	if d.postgresql {
-		schema = "truster_state."
+		schema = "public."
 	}
 	return strings.ReplaceAll(query, stateSchemaToken, schema)
 }

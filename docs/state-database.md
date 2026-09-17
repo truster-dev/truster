@@ -82,10 +82,10 @@ In the uncommon event of a migration failing:
 For least privilege, give migration and runtime operations different roles:
 
 - **Migration role:** database `CREATE`, `USAGE, CREATE` on `public`, and
-  ownership of `public.schema_migrations` and `truster_state`.
-- **Runtime role:** database `CONNECT`, `USAGE` on `public` and
-  `truster_state`, `SELECT` on `public.schema_migrations`, and `SELECT`,
-  `INSERT`, `UPDATE`, `DELETE` on every state table.
+  ownership of the tables in the dedicated state database.
+- **Runtime role:** database `CONNECT`, `USAGE` on `public`, `SELECT` on
+  `public.schema_migrations`, and `SELECT`, `INSERT`, `UPDATE`, `DELETE` on
+  every state table in `public`.
 
 `USAGE` on `public` is still required if its default PUBLIC privilege has been
 revoked. Reapply runtime table grants after migrations when needed.

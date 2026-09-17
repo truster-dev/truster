@@ -72,17 +72,17 @@ func resetPostgreSQLState(dsn string) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err = tx.Exec(`TRUNCATE truster_state.oauth_states,
-		truster_state.auth_codes,
-		truster_state.flow_credentials,
-		truster_state.upstream_credentials,
-		truster_state.otp_challenges,
-		truster_state.otp_sends,
-		truster_state.refresh_grants,
-		truster_state.refresh_tokens,
-		truster_state.grant_actions,
-		truster_state.identity_selections,
-		truster_state.pushed_requests CASCADE`); err != nil {
+	if _, err = tx.Exec(`TRUNCATE public.oauth_states,
+		public.auth_codes,
+		public.flow_credentials,
+		public.upstream_credentials,
+		public.otp_challenges,
+		public.otp_sends,
+		public.refresh_grants,
+		public.refresh_tokens,
+		public.grant_actions,
+		public.identity_selections,
+		public.pushed_requests CASCADE`); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -91,7 +91,7 @@ func resetPostgreSQLState(dsn string) error {
 // TestStateSchemaBinding verifies shared SQL retains its native numbered parameters.
 func TestStateSchemaBinding(t *testing.T) {
 	db := &database{postgresql: true}
-	if got, want := db.stateSQL("SELECT $1 FROM {{state}}oauth_states"), "SELECT $1 FROM truster_state.oauth_states"; got != want {
+	if got, want := db.stateSQL("SELECT $1 FROM {{state}}oauth_states"), "SELECT $1 FROM public.oauth_states"; got != want {
 		t.Fatalf("PostgreSQL state SQL = %q, want %q", got, want)
 	}
 	if got, want := (&database{}).stateSQL("SELECT $1 FROM {{state}}oauth_states"), "SELECT $1 FROM oauth_states"; got != want {
@@ -428,7 +428,7 @@ func TestPostgreSQLRuntimeIsSearchPathIndependent(t *testing.T) {
 		t.Fatal(err)
 	}
 	var count int
-	if err = store.db.QueryRow(`SELECT count(*) FROM truster_state.oauth_states WHERE state_token='forced-search-path'`).Scan(&count); err != nil || count != 1 {
+	if err = store.db.QueryRow(`SELECT count(*) FROM public.oauth_states WHERE state_token='forced-search-path'`).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("state schema write count=%d err=%v", count, err)
 	}
 	if err = store.db.QueryRow(`SELECT pg_sleep(1)`).Scan(new(any)); err == nil {
@@ -445,7 +445,7 @@ func TestPostgreSQLMigrationMetadataIsForcedPublic(t *testing.T) {
 		t.Fatal(err)
 	}
 	parameters := u.Query()
-	parameters.Set("search_path", "truster_state")
+	parameters.Set("search_path", "pg_catalog")
 	parameters.Set("x-migrations-table", "schema_migrations_conflict")
 	parameters.Set("x-migrations-table-quoted", "false")
 	u.RawQuery = parameters.Encode()
@@ -457,15 +457,15 @@ func TestPostgreSQLMigrationMetadataIsForcedPublic(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = db.Close() }()
-	var publicCount, stateCount int
+	var publicCount, conflictCount int
 	if err = db.QueryRow(`SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename='schema_migrations'`).Scan(&publicCount); err != nil {
 		t.Fatal(err)
 	}
-	if err = db.QueryRow(`SELECT count(*) FROM pg_tables WHERE schemaname='truster_state' AND tablename LIKE 'schema_migrations%'`).Scan(&stateCount); err != nil {
+	if err = db.QueryRow(`SELECT count(*) FROM pg_tables WHERE schemaname='pg_catalog' AND tablename LIKE 'schema_migrations%'`).Scan(&conflictCount); err != nil {
 		t.Fatal(err)
 	}
-	if publicCount != 1 || stateCount != 0 {
-		t.Fatalf("migration metadata public=%d state=%d", publicCount, stateCount)
+	if publicCount != 1 || conflictCount != 0 {
+		t.Fatalf("migration metadata public=%d conflict=%d", publicCount, conflictCount)
 	}
 }
 
@@ -480,9 +480,8 @@ func TestPostgreSQLRuntimeRequiresAllPrivileges(t *testing.T) {
 	cleanup()
 	t.Cleanup(cleanup)
 	if _, err := a.db.raw.Exec(`CREATE ROLE ` + role + ` LOGIN PASSWORD 'readiness-test';
-		GRANT USAGE ON SCHEMA public,truster_state TO ` + role + `;
-		GRANT SELECT ON public.schema_migrations TO ` + role + `;
-		GRANT SELECT ON ALL TABLES IN SCHEMA truster_state TO ` + role); err != nil {
+		GRANT USAGE ON SCHEMA public TO ` + role + `;
+		GRANT SELECT ON ALL TABLES IN SCHEMA public TO ` + role); err != nil {
 		t.Fatal(err)
 	}
 	u, err := url.Parse(os.Getenv("TRUSTER_STATE_TEST_DIRECT_DB_URL"))
@@ -516,13 +515,13 @@ func TestPostgreSQLMigrationParameters(t *testing.T) {
 	}
 }
 
-// TestPostgreSQLMigrationBaseline verifies v2.0.0 ships one complete initial migration.
+// TestPostgreSQLMigrationBaseline verifies the complete initial schema and public-schema transition.
 func TestPostgreSQLMigrationBaseline(t *testing.T) {
 	entries, err := migrations.ReadDir("migrations/postgresql")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 || entries[0].Name() != "000001_initial.up.sql" {
+	if len(entries) != 2 || entries[0].Name() != "000001_initial.up.sql" || entries[1].Name() != "000002_public_schema.up.sql" {
 		t.Fatalf("migration files = %v", entries)
 	}
 	baseline, err := migrations.ReadFile("migrations/postgresql/000001_initial.up.sql")

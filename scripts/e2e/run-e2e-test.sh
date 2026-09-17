@@ -332,10 +332,8 @@ go build -o "$E2E_TEMP_DIR/proxy" "$PROJECT_ROOT/scripts/test-rr-proxy"
 echo "==> Migrating PostgreSQL state database with the migration-only role..."
 "$PROJECT_ROOT/bin/truster" migrate --config "${TRUSTER_CONFIGS[0]}"
 $CONTAINER_CMD exec -i "$POSTGRES_CONTAINER_NAME" psql -v ON_ERROR_STOP=1 -U postgres -d truster_e2e >/dev/null <<'SQL'
-GRANT USAGE ON SCHEMA truster_state TO truster_state;
 GRANT USAGE ON SCHEMA public TO truster_state;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA truster_state TO truster_state;
-GRANT SELECT ON TABLE public.schema_migrations TO truster_state;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO truster_state;
 SQL
 
 echo "==> Starting two truster replicas and the round-robin issuer proxy..."
