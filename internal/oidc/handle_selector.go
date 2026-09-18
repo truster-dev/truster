@@ -21,6 +21,11 @@ func (s *Server) renderSelector(w http.ResponseWriter, state OAuthState, ids []s
 		s.renderBrowserError(w, http.StatusInternalServerError, failureSelectorStateEncode)
 		return
 	}
+	s.renderSelectorWithState(w, state, ids, token)
+}
+
+// renderSelectorWithState renders configured sign-in methods with existing opaque authorization state.
+func (s *Server) renderSelectorWithState(w http.ResponseWriter, state OAuthState, ids []string, token string) {
 	items := make([]templates.ConnectorData, 0, len(ids))
 	for _, id := range ids {
 		cfg := s.config.UserLoginConnectors[id]

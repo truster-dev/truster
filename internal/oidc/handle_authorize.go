@@ -221,16 +221,43 @@ func (s *Server) handlePushedAuthorize(w http.ResponseWriter, r *http.Request, c
 		return
 	}
 	state := OAuthState{ClientID: clientID, RedirectURI: pushed.RedirectURI, CodeChallenge: pushed.CodeChallenge, Nonce: pushed.Nonce, OIDCState: pushed.State, Scopes: pushed.Scopes, RefreshMode: mode, AuthTime: now, Purpose: purpose, DPoPJKT: pushed.DPoPJKT, PushedAuthorization: true}
-	if strings.Contains(" "+state.Scopes+" ", " offline_access ") {
-		token, encodeErr := s.authCodeMgr.EncodeState(state)
-		if encodeErr != nil {
-			s.renderBrowserError(w, http.StatusInternalServerError, failurePushedConsentStateEncode)
-			return
-		}
-		s.renderBrowserPage(w, http.StatusOK, "consent", templates.ConsentData{Title: "Allow offline access", State: token, ClientID: clientID}, failurePushedConsentRender)
+	token, err := s.authCodeMgr.EncodeState(state)
+	if err != nil {
+		s.renderBrowserError(w, http.StatusInternalServerError, failurePushedAuthorizationStateEncode)
 		return
 	}
-	s.continueAuthorization(w, r, state)
+	w.Header().Set("Cache-Control", "no-store")
+	http.Redirect(w, r, "/authorize/continue?"+url.Values{"state": {token}}.Encode(), http.StatusSeeOther)
+}
+
+// HandleAuthorizeContinue renders refresh-safe browser interaction after consuming a pushed request.
+func (s *Server) HandleAuthorizeContinue(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	if len(q) != 1 || len(q["state"]) != 1 || q.Get("state") == "" {
+		s.renderBrowserError(w, http.StatusBadRequest, failurePushedAuthorizationContinuation)
+		return
+	}
+	token := q.Get("state")
+	state, err := s.authCodeMgr.PeekState(token)
+	if err != nil || !state.PushedAuthorization || state.ConnectorID != "" {
+		s.renderBrowserError(w, http.StatusBadRequest, failurePushedAuthorizationContinuation)
+		return
+	}
+	if strings.Contains(" "+state.Scopes+" ", " offline_access ") {
+		s.renderBrowserPage(w, http.StatusOK, "consent", templates.ConsentData{Title: "Allow offline access", State: token, ClientID: state.ClientID}, failurePushedConsentRender)
+		return
+	}
+	ids := s.connectorIDs()
+	if len(ids) == 1 && s.config.UserLoginConnectors[ids[0]].Type != "email" && state.Purpose != "authorize_create" {
+		state, err = s.authCodeMgr.DecodeState(token)
+		if err != nil {
+			s.renderBrowserError(w, http.StatusBadRequest, failurePushedAuthorizationContinuation)
+			return
+		}
+		s.selectConnector(w, r, ids[0], *state)
+		return
+	}
+	s.renderSelectorWithState(w, *state, ids, token)
 }
 
 // authorizationPrompt validates supported OIDC prompt profiles and returns durable flow intent.

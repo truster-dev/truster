@@ -106,7 +106,9 @@ they must identify the same key.
 
 Truster returns a `request_uri` that expires after 60 seconds and works once. Open
 `/authorize` in the browser with only that value and `client_id`. With `require_par`
-enabled, Truster rejects login requests that skip `/par`.
+enabled, Truster rejects login requests that skip `/par`. After consuming the pushed
+request, Truster redirects the browser to an opaque continuation URL so refreshing a
+sign-in or consent page does not attempt to reuse the `request_uri`.
 
 ## Exchange, refresh, and revoke
 

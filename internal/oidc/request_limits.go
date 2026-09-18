@@ -17,10 +17,11 @@ const (
 	maxBrowserFormBytes = 32 << 10
 )
 
-// SecurityHeaders prevents browser pages from being embedded by another origin.
+// SecurityHeaders prevents framing and browser-state leakage to another origin.
 func (s *Server) SecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'")
+		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Frame-Options", "DENY")
 		next.ServeHTTP(w, r)
 	})

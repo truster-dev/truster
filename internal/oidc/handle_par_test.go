@@ -17,6 +17,24 @@ import (
 	"github.com/truster-dev/truster/v2/internal/config"
 )
 
+// followPushedContinuation follows the refresh-safe redirect after a pushed request is consumed.
+func followPushedContinuation(t *testing.T, server *Server, redirect *httptest.ResponseRecorder) *httptest.ResponseRecorder {
+	t.Helper()
+	if redirect.Code != http.StatusSeeOther {
+		t.Fatalf("authorize status = %d, body=%s", redirect.Code, redirect.Body.String())
+	}
+	if redirect.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("authorize Cache-Control = %q", redirect.Header().Get("Cache-Control"))
+	}
+	location, err := url.Parse(redirect.Header().Get("Location"))
+	if err != nil || location.Path != "/authorize/continue" || location.Query().Get("state") == "" {
+		t.Fatalf("authorize location = %q, error=%v", redirect.Header().Get("Location"), err)
+	}
+	response := httptest.NewRecorder()
+	server.HandleAuthorizeContinue(response, httptest.NewRequest(http.MethodGet, location.String(), nil))
+	return response
+}
+
 // TestPushedAuthorizeReplacesConsumedState verifies connector selection replaces browser state.
 func TestPushedAuthorizeReplacesConsumedState(t *testing.T) {
 	server, _ := authorizeServer(t, map[string]config.ConnectorConfig{"one": {Type: "google", DisplayName: "One"}, "two": {Type: "generic", DisplayName: "Two"}})
@@ -32,8 +50,9 @@ func TestPushedAuthorizeReplacesConsumedState(t *testing.T) {
 		t.Fatal(err)
 	}
 	authorize := httptest.NewRequest(http.MethodGet, "/authorize?client_id=client&request_uri="+url.QueryEscape(pushed.RequestURI), nil)
-	selector := httptest.NewRecorder()
-	server.HandleAuthorize(selector, authorize)
+	authorizeResponse := httptest.NewRecorder()
+	server.HandleAuthorize(authorizeResponse, authorize)
+	selector := followPushedContinuation(t, server, authorizeResponse)
 	match := regexp.MustCompile(`\?state=([^"&]+)`).FindStringSubmatch(selector.Body.String())
 	if len(match) != 2 {
 		t.Fatalf("selector state not found: %s", selector.Body.String())
@@ -79,8 +98,9 @@ func TestPushedAuthorizeConsentPersistsBrowserState(t *testing.T) {
 		t.Fatal(err)
 	}
 	authorize := httptest.NewRequest(http.MethodGet, "/authorize?client_id=client&request_uri="+url.QueryEscape(pushed.RequestURI), nil)
-	consent := httptest.NewRecorder()
-	server.HandleAuthorize(consent, authorize)
+	redirect := httptest.NewRecorder()
+	server.HandleAuthorize(redirect, authorize)
+	consent := followPushedContinuation(t, server, redirect)
 	match := regexp.MustCompile(`name="state" value="([^"]+)"`).FindStringSubmatch(consent.Body.String())
 	if len(match) != 2 {
 		t.Fatalf("consent state not found: %s", consent.Body.String())
@@ -110,10 +130,17 @@ func TestHandlePARStoresOneTimeRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	front := httptest.NewRequest(http.MethodGet, "/authorize?client_id=client&request_uri="+url.QueryEscape(result.RequestURI), nil)
-	first := httptest.NewRecorder()
-	server.HandleAuthorize(first, front)
+	redirect := httptest.NewRecorder()
+	server.HandleAuthorize(redirect, front)
+	first := followPushedContinuation(t, server, redirect)
 	if first.Code != http.StatusOK {
-		t.Fatalf("first consume status = %d body=%s", first.Code, first.Body.String())
+		t.Fatalf("continuation status = %d body=%s", first.Code, first.Body.String())
+	}
+	location := redirect.Header().Get("Location")
+	refreshed := httptest.NewRecorder()
+	server.HandleAuthorizeContinue(refreshed, httptest.NewRequest(http.MethodGet, location, nil))
+	if refreshed.Code != http.StatusOK || refreshed.Body.String() != first.Body.String() {
+		t.Fatalf("refreshed continuation status = %d body=%s", refreshed.Code, refreshed.Body.String())
 	}
 	second := httptest.NewRecorder()
 	server.HandleAuthorize(second, front)
@@ -149,8 +176,9 @@ func TestHandlePARPromptCreateRendersSignup(t *testing.T) {
 		t.Fatalf("PAR response=%d %q", response.Code, response.Body.String())
 	}
 	authorize := httptest.NewRequest(http.MethodGet, "/authorize?client_id=client&request_uri="+url.QueryEscape(pushed.RequestURI), nil)
-	selector := httptest.NewRecorder()
-	server.HandleAuthorize(selector, authorize)
+	redirect := httptest.NewRecorder()
+	server.HandleAuthorize(redirect, authorize)
+	selector := followPushedContinuation(t, server, redirect)
 	if selector.Code != http.StatusOK || !strings.Contains(selector.Body.String(), "<h1>Sign up</h1>") {
 		t.Fatalf("selector response=%d %q", selector.Code, selector.Body.String())
 	}

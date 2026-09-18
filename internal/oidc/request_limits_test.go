@@ -25,6 +25,9 @@ func TestSecurityHeadersPreventFraming(t *testing.T) {
 	if got := response.Header().Get("Content-Security-Policy"); got != "frame-ancestors 'none'" {
 		t.Fatalf("Content-Security-Policy = %q", got)
 	}
+	if got := response.Header().Get("Referrer-Policy"); got != "no-referrer" {
+		t.Fatalf("Referrer-Policy = %q", got)
+	}
 	if got := response.Header().Get("X-Frame-Options"); got != "DENY" {
 		t.Fatalf("X-Frame-Options = %q", got)
 	}
