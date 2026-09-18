@@ -31,6 +31,7 @@ func (s *Server) HandleDiscovery(w http.ResponseWriter, r *http.Request) {
 		"token_endpoint_auth_methods_supported": []string{"none"},
 		"claims_supported":                      []string{"sub", "email", "email_verified", "preferred_username", "groups"},
 		"code_challenge_methods_supported":      []string{"S256"},
+		"prompt_values_supported":               []string{"none", "login", "create"},
 	}
 
 	w.Header().Set("Content-Type", "application/json")

@@ -132,6 +132,12 @@ required once.
 Connector callbacks and browser form endpoints are internal parts of the login
 flow rather than downstream OAuth APIs.
 
+Truster supports the OIDC `prompt` values `none`, `login`, and `create` and
+advertises them through discovery. `create` starts the same authentication flow
+with account-creation presentation; it does not guarantee that a new identity
+is created. Because Truster has no browser session, `none` returns
+`login_required`. Unsupported or combined values are rejected.
+
 ## Token identity and groups
 
 Issued tokens include `iss`, `aud`, `sub`, `email`, `email_verified`,

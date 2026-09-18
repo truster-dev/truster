@@ -30,7 +30,13 @@ func (s *Server) renderSelector(w http.ResponseWriter, state OAuthState, ids []s
 	if s.config.Email != nil && s.config.Email.Turnstile != nil {
 		site = s.config.Email.Turnstile.SiteKey
 	}
-	s.renderBrowserPage(w, http.StatusOK, "selector", templates.SelectorData{Title: "Sign in", State: token, SiteKey: site, Connectors: items}, failureSelectorRender)
+	title := "Sign in"
+	screen := "login"
+	if state.Purpose == "authorize_create" {
+		title = "Sign up"
+		screen = "signup"
+	}
+	s.renderBrowserPage(w, http.StatusOK, "selector", templates.SelectorData{Title: title, Screen: screen, State: token, SiteKey: site, Connectors: items}, failureSelectorRender)
 }
 
 // connectorIDs returns connector IDs in configured display order.

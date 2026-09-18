@@ -138,6 +138,21 @@ func TestHandleAuthorizeAutomaticallySelectsSingleConnector(t *testing.T) {
 	}
 }
 
+// TestHandleAuthorizePromptNoneRequiresInteraction verifies Truster never silently authenticates without a browser session.
+func TestHandleAuthorizePromptNoneRequiresInteraction(t *testing.T) {
+	server, _ := authorizeServer(t, map[string]config.ConnectorConfig{"email": {Type: "email", DisplayName: "Email"}})
+	request := authorizationRequest()
+	query := request.URL.Query()
+	query.Set("prompt", "none")
+	request.URL.RawQuery = query.Encode()
+	response := httptest.NewRecorder()
+	server.HandleAuthorize(response, request)
+	location, err := url.Parse(response.Header().Get("Location"))
+	if err != nil || response.Code != http.StatusFound || location.Query().Get("error") != "login_required" || location.Query().Get("state") != "downstream-state" {
+		t.Fatalf("redirect=%d %q err=%v", response.Code, response.Header().Get("Location"), err)
+	}
+}
+
 // TestHandleAuthorizeBindsDirectDPoPRequest verifies required direct requests preserve a canonical thumbprint.
 func TestHandleAuthorizeBindsDirectDPoPRequest(t *testing.T) {
 	server, captures := authorizeServer(t, map[string]config.ConnectorConfig{

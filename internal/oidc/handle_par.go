@@ -101,6 +101,10 @@ func (s *Server) HandlePAR(w http.ResponseWriter, r *http.Request) {
 		writeOAuthJSON(w, 400, "invalid_scope")
 		return
 	}
+	if _, _, ok := authorizationPrompt(r.PostForm.Get("prompt")); !ok {
+		writeOAuthJSON(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
 	sort.Strings(scopes)
 	proofHeaders := r.Header.Values("DPoP")
 	if len(proofHeaders) > 1 {

@@ -134,6 +134,45 @@ func TestHandlePARRejectsDuplicateParameters(t *testing.T) {
 	}
 }
 
+// TestHandlePARPromptCreateRendersSignup verifies the standardized create intent reaches browser presentation.
+func TestHandlePARPromptCreateRendersSignup(t *testing.T) {
+	server, _ := authorizeServer(t, map[string]config.ConnectorConfig{"google": {Type: "google", DisplayName: "Google"}})
+	values := url.Values{"client_id": {"client"}, "redirect_uri": {"https://client.example/callback"}, "response_type": {"code"}, "scope": {"openid"}, "code_challenge": {"challenge"}, "code_challenge_method": {"S256"}, "prompt": {"create"}}
+	request := httptest.NewRequest(http.MethodPost, "/par", strings.NewReader(values.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+	server.HandlePAR(response, request)
+	var pushed struct {
+		RequestURI string `json:"request_uri"`
+	}
+	if response.Code != http.StatusCreated || json.Unmarshal(response.Body.Bytes(), &pushed) != nil {
+		t.Fatalf("PAR response=%d %q", response.Code, response.Body.String())
+	}
+	authorize := httptest.NewRequest(http.MethodGet, "/authorize?client_id=client&request_uri="+url.QueryEscape(pushed.RequestURI), nil)
+	selector := httptest.NewRecorder()
+	server.HandleAuthorize(selector, authorize)
+	if selector.Code != http.StatusOK || !strings.Contains(selector.Body.String(), "<h1>Sign up</h1>") {
+		t.Fatalf("selector response=%d %q", selector.Code, selector.Body.String())
+	}
+}
+
+// TestHandlePARRejectsUnsupportedPrompt verifies unknown and combined prompt profiles fail at PAR.
+func TestHandlePARRejectsUnsupportedPrompt(t *testing.T) {
+	for _, prompt := range []string{"signup", "create login"} {
+		t.Run(prompt, func(t *testing.T) {
+			server, _ := authorizeServer(t, nil)
+			values := url.Values{"client_id": {"client"}, "redirect_uri": {"https://client.example/callback"}, "response_type": {"code"}, "scope": {"openid"}, "code_challenge": {"challenge"}, "code_challenge_method": {"S256"}, "prompt": {prompt}}
+			request := httptest.NewRequest(http.MethodPost, "/par", strings.NewReader(values.Encode()))
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			response := httptest.NewRecorder()
+			server.HandlePAR(response, request)
+			if response.Code != http.StatusBadRequest || response.Body.String() != "{\"error\":\"invalid_request\"}\n" {
+				t.Fatalf("response=%d %q", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
 // TestHandlePARRejectsUnsupportedInputs verifies the bounded public-client request boundary.
 func TestHandlePARRejectsUnsupportedInputs(t *testing.T) {
 	valid := url.Values{"client_id": {"client"}, "redirect_uri": {"https://client.example/callback"}, "response_type": {"code"}, "scope": {"openid"}, "code_challenge": {"challenge"}, "code_challenge_method": {"S256"}}

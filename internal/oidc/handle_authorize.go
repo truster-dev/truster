@@ -26,6 +26,7 @@ const (
 	oauthAuthorizationErrorConsentRequired         oauthAuthorizationError = "consent_required"
 	oauthAuthorizationErrorInvalidRequest          oauthAuthorizationError = "invalid_request"
 	oauthAuthorizationErrorInvalidScope            oauthAuthorizationError = "invalid_scope"
+	oauthAuthorizationErrorLoginRequired           oauthAuthorizationError = "login_required"
 	oauthAuthorizationErrorServer                  oauthAuthorizationError = "server_error"
 	oauthAuthorizationErrorTemporarilyUnavailable  oauthAuthorizationError = "temporarily_unavailable"
 	oauthAuthorizationErrorUnsupportedResponseType oauthAuthorizationError = "unsupported_response_type"
@@ -109,6 +110,15 @@ func (s *Server) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 		s.redirectAuthorizationError(w, r, redirect, q.Get("state"), oauthAuthorizationErrorConsentRequired, failureAuthorizationConsentRequired)
 		return
 	}
+	purpose, noInteraction, validPrompt := authorizationPrompt(q.Get("prompt"))
+	if !validPrompt {
+		s.redirectAuthorizationError(w, r, redirect, q.Get("state"), oauthAuthorizationErrorInvalidRequest, failureAuthorizationPrompt)
+		return
+	}
+	if noInteraction {
+		s.redirectAuthorizationError(w, r, redirect, q.Get("state"), oauthAuthorizationErrorLoginRequired, failureAuthorizationLoginRequired)
+		return
+	}
 	sort.Strings(requested)
 	challenge := q.Get("code_challenge")
 	if challenge == "" || q.Get("code_challenge_method") != "S256" {
@@ -122,7 +132,7 @@ func (s *Server) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 	if offline {
 		mode = "offline"
 	}
-	state := OAuthState{ClientID: clientID, RedirectURI: redirect, CodeChallenge: challenge, Nonce: q.Get("nonce"), OIDCState: q.Get("state"), Scopes: strings.Join(requested, " "), RefreshMode: mode, AuthTime: time.Now(), DPoPJKT: dpopJKT}
+	state := OAuthState{ClientID: clientID, RedirectURI: redirect, CodeChallenge: challenge, Nonce: q.Get("nonce"), OIDCState: q.Get("state"), Scopes: strings.Join(requested, " "), RefreshMode: mode, AuthTime: time.Now(), Purpose: purpose, DPoPJKT: dpopJKT}
 	if offline {
 		token, err := s.authCodeMgr.EncodeState(state)
 		if err != nil {
@@ -201,7 +211,16 @@ func (s *Server) handlePushedAuthorize(w http.ResponseWriter, r *http.Request, c
 		s.redirectAuthorizationError(w, r, pushed.RedirectURI, pushed.State, oauthAuthorizationErrorConsentRequired, failureAuthorizationConsentRequired)
 		return
 	}
-	state := OAuthState{ClientID: clientID, RedirectURI: pushed.RedirectURI, CodeChallenge: pushed.CodeChallenge, Nonce: pushed.Nonce, OIDCState: pushed.State, Scopes: pushed.Scopes, RefreshMode: mode, AuthTime: now, Purpose: "authorize", DPoPJKT: pushed.DPoPJKT, PushedAuthorization: true}
+	purpose, noInteraction, validPrompt := authorizationPrompt(pushed.Prompt)
+	if !validPrompt {
+		s.redirectAuthorizationError(w, r, pushed.RedirectURI, pushed.State, oauthAuthorizationErrorInvalidRequest, failureAuthorizationPrompt)
+		return
+	}
+	if noInteraction {
+		s.redirectAuthorizationError(w, r, pushed.RedirectURI, pushed.State, oauthAuthorizationErrorLoginRequired, failureAuthorizationLoginRequired)
+		return
+	}
+	state := OAuthState{ClientID: clientID, RedirectURI: pushed.RedirectURI, CodeChallenge: pushed.CodeChallenge, Nonce: pushed.Nonce, OIDCState: pushed.State, Scopes: pushed.Scopes, RefreshMode: mode, AuthTime: now, Purpose: purpose, DPoPJKT: pushed.DPoPJKT, PushedAuthorization: true}
 	if strings.Contains(" "+state.Scopes+" ", " offline_access ") {
 		token, encodeErr := s.authCodeMgr.EncodeState(state)
 		if encodeErr != nil {
@@ -212,6 +231,20 @@ func (s *Server) handlePushedAuthorize(w http.ResponseWriter, r *http.Request, c
 		return
 	}
 	s.continueAuthorization(w, r, state)
+}
+
+// authorizationPrompt validates supported OIDC prompt profiles and returns durable flow intent.
+func authorizationPrompt(prompt string) (purpose string, noInteraction, ok bool) {
+	switch prompt {
+	case "", "login":
+		return "authorize", false, true
+	case "create":
+		return "authorize_create", false, true
+	case "none":
+		return "authorize", true, true
+	default:
+		return "", false, false
+	}
 }
 
 // HandleConsent accepts or denies explicit offline-access consent.
@@ -239,7 +272,7 @@ func (s *Server) HandleConsent(w http.ResponseWriter, r *http.Request) {
 // continueAuthorization begins connector selection after any required consent.
 func (s *Server) continueAuthorization(w http.ResponseWriter, r *http.Request, state OAuthState) {
 	ids := s.connectorIDs()
-	if len(ids) == 1 && s.config.UserLoginConnectors[ids[0]].Type != "email" {
+	if len(ids) == 1 && s.config.UserLoginConnectors[ids[0]].Type != "email" && state.Purpose != "authorize_create" {
 		s.selectConnector(w, r, ids[0], state)
 		return
 	}
@@ -264,6 +297,8 @@ func (s *Server) redirectAuthorizationError(w http.ResponseWriter, r *http.Reque
 		description = "The sign-in request is invalid or has expired."
 	case oauthAuthorizationErrorInvalidScope:
 		description = "The application requested unsupported access."
+	case oauthAuthorizationErrorLoginRequired:
+		description = "Sign-in requires interaction."
 	case oauthAuthorizationErrorServer:
 		status = http.StatusInternalServerError
 		description = "Sign-in is temporarily unavailable. Try again shortly."

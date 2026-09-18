@@ -25,6 +25,7 @@ func TestHandleDiscoveryAdvertisesConfiguredSigningAlgorithm(t *testing.T) {
 		SigningAlgorithms        []string `json:"id_token_signing_alg_values_supported"`
 		DPoPSigningAlgorithms    []string `json:"dpop_signing_alg_values_supported"`
 		TokenAuthenticationModes []string `json:"token_endpoint_auth_methods_supported"`
+		PromptValues             []string `json:"prompt_values_supported"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&discovery); err != nil {
 		t.Fatal(err)
@@ -37,5 +38,8 @@ func TestHandleDiscoveryAdvertisesConfiguredSigningAlgorithm(t *testing.T) {
 	}
 	if got := discovery.TokenAuthenticationModes; len(got) != 1 || got[0] != "none" {
 		t.Fatalf("token authentication modes = %v, want [none]", got)
+	}
+	if got := discovery.PromptValues; len(got) != 3 || got[0] != "none" || got[1] != "login" || got[2] != "create" {
+		t.Fatalf("prompt values = %v, want [none login create]", got)
 	}
 }

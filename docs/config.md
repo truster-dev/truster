@@ -364,7 +364,7 @@ filesystem: provide only the files you want to replace.
 | Path | Data |
 |---|---|
 | `pages/layout.html` | Common HTML page layout. |
-| `pages/selector.html` | `.Title`, `.State`, `.SiteKey`, `.Connectors` (`.ID`, `.DisplayName`, `.URL`, `.Email`). |
+| `pages/selector.html` | `.Title`, `.Screen` (`login` or `signup`), `.State`, `.SiteKey`, `.Connectors` (`.ID`, `.DisplayName`, `.URL`, `.Email`). |
 | `pages/identity.html` | `.Title`, `.Token`, `.Emails` (`.Address`, `.Verified`, `.Primary`). |
 | `pages/otp.html` | `.Title`, `.ChallengeID`, `.Message`, `.Error`, `.Email`, `.ExpiresAt`, `.ExpiresIn`, `.RetryAfter`, `.RetryAfterSeconds`. |
 | `pages/error.html` | `.Title`, `.Message`. |

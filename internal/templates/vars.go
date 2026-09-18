@@ -15,6 +15,7 @@ type ConnectorData struct {
 // SelectorData supplies data to the sign-in selector template.
 type SelectorData struct {
 	Title      string
+	Screen     string
 	State      string
 	SiteKey    string
 	Connectors []ConnectorData

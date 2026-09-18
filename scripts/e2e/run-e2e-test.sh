@@ -362,7 +362,7 @@ DIRECT_AUTH_STATUS="$(curl -sS -o "$DIRECT_AUTH_RESPONSE" -w '%{http_code}' --ge
     --data-urlencode 'code_challenge_method=S256' \
     --data-urlencode "dpop_jkt=$DPOP_JKT" \
     "$TRUSTER_ISSUER/authorize")"
-if [ "$DIRECT_AUTH_STATUS" != 400 ] || ! grep -Fq 'pushed authorization request required' "$DIRECT_AUTH_RESPONSE"; then
+if [ "$DIRECT_AUTH_STATUS" != 400 ] || ! grep -Fq 'Unable to continue' "$DIRECT_AUTH_RESPONSE"; then
     echo "ERROR: the PAR-required client accepted a direct authorization request"
     exit 1
 fi
@@ -528,7 +528,7 @@ if ! jq -er '
     echo "ERROR: refreshed static client token did not preserve configured user group mapping"
     exit 1
 fi
-if ! jq -s -e --arg client "$STATIC_INTERACTIVE_CLIENT_ID" 'any(.[]; .msg == "refresh attempt" and .result == 200 and .client_id == $client)' "${TRUSTER_LOGS[@]}" > /dev/null; then
+if ! jq -s -e --arg client "$STATIC_INTERACTIVE_CLIENT_ID" 'any(.[]; .msg == "refresh attempt" and .status == 200 and .client_id == $client)' "${TRUSTER_LOGS[@]}" > /dev/null; then
     show_replica_logs
     echo "ERROR: no successful static client refresh exchange was logged"
     exit 1
@@ -693,7 +693,7 @@ if ! jq -er '
     echo "ERROR: refreshed ID token did not contain current database policy groups"
     exit 1
 fi
-if ! jq -s -e --arg client "$DB_INTERACTIVE_CLIENT_ID" 'any(.[]; .msg == "refresh attempt" and .result == 200 and .client_id == $client)' "${TRUSTER_LOGS[@]}" > /dev/null; then
+if ! jq -s -e --arg client "$DB_INTERACTIVE_CLIENT_ID" 'any(.[]; .msg == "refresh attempt" and .status == 200 and .client_id == $client)' "${TRUSTER_LOGS[@]}" > /dev/null; then
     show_replica_logs
     echo "ERROR: no successful kubelogin refresh exchange was logged"
     exit 1

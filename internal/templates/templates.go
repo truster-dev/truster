@@ -55,7 +55,7 @@ func Load(dir string) (*Manager, error) {
 	}
 	m := &Manager{pages: make(map[string]*template.Template), public: public}
 	pageData := map[string]any{
-		"selector": SelectorData{Title: "Sign in", State: "opaque", SiteKey: "site-key", Connectors: []ConnectorData{{ID: "google", DisplayName: "Google", URL: "/select/google?state=opaque"}, {ID: "email", DisplayName: "Email", Email: true}}},
+		"selector": SelectorData{Title: "Sign in", Screen: "login", State: "opaque", SiteKey: "site-key", Connectors: []ConnectorData{{ID: "google", DisplayName: "Google", URL: "/select/google?state=opaque"}, {ID: "email", DisplayName: "Email", Email: true}}},
 		"otp":      OTPData{Title: "Verify email", ChallengeID: "opaque", Message: "A code was sent.", Email: "user@example.com", ExpiresIn: 5 * time.Minute, ExpiresAt: time.Now().Add(5 * time.Minute)},
 		"error":    ErrorData{"Login failed", "Unable to sign in."},
 		"identity": IdentityData{Title: "Choose an email", Token: "opaque", Emails: []EmailData{{Address: "primary@example.com", Verified: true, Primary: true}, {Address: "other@example.com"}}},
