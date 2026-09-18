@@ -668,6 +668,25 @@ func TestValidateEmailConfiguration(t *testing.T) {
 	if err := validate(&cfg); err == nil {
 		t.Fatal("partial Turnstile configuration accepted")
 	}
+	cfg.Email.Turnstile = &TurnstileConfig{SiteKey: "site", SecretName: "secret", RemoteIP: &TurnstileRemoteIPConfig{Source: "header", Header: "invalid header"}}
+	if err := validate(&cfg); err == nil {
+		t.Fatal("invalid Turnstile remote IP header accepted")
+	}
+	cfg.Email.Turnstile.RemoteIP.Header = "cf-connecting-ip"
+	if err := validate(&cfg); err != nil {
+		t.Fatalf("valid Turnstile remote IP header rejected: %v", err)
+	}
+	if cfg.Email.Turnstile.RemoteIP.Header != "Cf-Connecting-Ip" {
+		t.Fatalf("Turnstile remote IP header = %q, want canonical name", cfg.Email.Turnstile.RemoteIP.Header)
+	}
+	cfg.Email.Turnstile.RemoteIP = &TurnstileRemoteIPConfig{Source: "remote_addr", Header: "X-Forwarded-For"}
+	if err := validate(&cfg); err == nil {
+		t.Fatal("Turnstile remote_addr source accepted a header")
+	}
+	cfg.Email.Turnstile.RemoteIP = &TurnstileRemoteIPConfig{Source: "remote_addr"}
+	if err := validate(&cfg); err != nil {
+		t.Fatalf("valid Turnstile remote_addr source rejected: %v", err)
+	}
 
 	disabled := validTestConfig()
 	disabled.Email = &EmailConfig{VerificationMode: "disabled"}

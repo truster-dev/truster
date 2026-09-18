@@ -60,9 +60,13 @@ func (s *Server) HandleEmailStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state.ConnectorID = connectorID
-	host, _, _ := net.SplitHostPort(r.RemoteAddr)
-	if err = s.challenge.Verify(r.Context(), r.PostForm.Get("cf-turnstile-response"), host); err != nil {
-		http.Error(w, "request rejected", 400)
+	remoteIP := ""
+	if s.config.Email != nil && s.config.Email.Turnstile != nil && s.config.Email.Turnstile.RemoteIP != nil {
+		remoteIP = remoteIPFromRequest(r, s.config.Email.Turnstile.RemoteIP.Source, s.config.Email.Turnstile.RemoteIP.Header)
+	}
+	if err = s.challenge.Verify(r.Context(), r.PostForm.Get("cf-turnstile-response"), remoteIP); err != nil {
+		s.logger.Warn("reject email challenge", "error", err)
+		s.renderErrorPage(w, http.StatusBadRequest, "Security check failed", "We couldn't verify the security check. Return to sign in and try again.")
 		return
 	}
 	email, err := normalizeEmail(r.PostForm.Get("email"))
@@ -71,6 +75,24 @@ func (s *Server) HandleEmailStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.beginOTP(w, r, *state, connectorID, email, email)
+}
+
+// remoteIPFromRequest returns a valid IP from the explicitly configured request source.
+func remoteIPFromRequest(r *http.Request, source, header string) string {
+	value := ""
+	switch source {
+	case "remote_addr":
+		value = r.RemoteAddr
+		if host, _, err := net.SplitHostPort(value); err == nil {
+			value = host
+		}
+	case "header":
+		value = strings.TrimSpace(strings.Split(r.Header.Get(header), ",")[0])
+	}
+	if net.ParseIP(value) == nil {
+		return ""
+	}
+	return value
 }
 
 // beginOTP creates, sends, and renders a new OTP challenge.

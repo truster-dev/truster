@@ -33,6 +33,20 @@ type fakeMailer struct{ err error }
 // SendOTP returns the configured error without sending mail.
 func (m fakeMailer) SendOTP(context.Context, string, string, time.Time) error { return m.err }
 
+// recordingChallenge captures challenge verification inputs and returns a configured error.
+type recordingChallenge struct {
+	response string
+	remoteIP string
+	err      error
+}
+
+// Verify records the challenge response and visitor IP.
+func (c *recordingChallenge) Verify(_ context.Context, response, remoteIP string) error {
+	c.response = response
+	c.remoteIP = remoteIP
+	return c.err
+}
+
 // TestBeginOTPDoesNotExposeSMTPFailure verifies delivery outcomes are indistinguishable.
 func TestBeginOTPDoesNotExposeSMTPFailure(t *testing.T) {
 	responses := make([]string, 0, 2)
@@ -161,6 +175,46 @@ func TestHandleEmailStartUsesConnectorFromSelector(t *testing.T) {
 	server.HandleEmailStart(response, request)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "user@example.com") || !strings.Contains(response.Body.String(), "5 minutes") {
 		t.Fatalf("unexpected email start response: %d %s", response.Code, response.Body.String())
+	}
+}
+
+// TestHandleEmailStartUsesConfiguredVisitorIPAndErrorPage verifies proxy IP forwarding and browser errors.
+func TestHandleEmailStartUsesConfiguredVisitorIPAndErrorPage(t *testing.T) {
+	server, _ := authorizeServer(t, map[string]config.ConnectorConfig{
+		"email": {Type: "email", DisplayName: "Email"},
+	})
+	verifier := &recordingChallenge{err: errors.New("challenge rejected: invalid-input-response")}
+	server.challenge = verifier
+	server.config.Email = &config.EmailConfig{
+		OTPTTL: config.Duration(5 * time.Minute),
+		Turnstile: &config.TurnstileConfig{RemoteIP: &config.TurnstileRemoteIPConfig{
+			Source: "header",
+			Header: "X-Forwarded-For",
+		}},
+	}
+
+	selector := httptest.NewRecorder()
+	server.HandleAuthorize(selector, authorizationRequest())
+	match := regexp.MustCompile(`name="state" value="([^"]+)"`).FindStringSubmatch(selector.Body.String())
+	if len(match) != 2 {
+		t.Fatalf("selector state not found: %s", selector.Body.String())
+	}
+	form := url.Values{"state": {match[1]}, "connector": {"email"}, "email": {"user@example.com"}, "cf-turnstile-response": {"response-token"}}
+	request := httptest.NewRequest(http.MethodPost, "/email/start", strings.NewReader(form.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("X-Forwarded-For", "203.0.113.5, 10.0.0.2")
+	response := httptest.NewRecorder()
+	server.HandleEmailStart(response, request)
+	if verifier.response != "response-token" || verifier.remoteIP != "203.0.113.5" {
+		t.Fatalf("challenge inputs = %q, %q", verifier.response, verifier.remoteIP)
+	}
+	if response.Code != http.StatusBadRequest || response.Header().Get("Content-Type") != "text/html; charset=utf-8" || !strings.Contains(response.Body.String(), "Security check failed") {
+		t.Fatalf("unexpected challenge rejection response: %d %s", response.Code, response.Body.String())
+	}
+	direct := httptest.NewRequest(http.MethodGet, "/", nil)
+	direct.RemoteAddr = "[2001:db8::5]:4321"
+	if got := remoteIPFromRequest(direct, "remote_addr", ""); got != "2001:db8::5" {
+		t.Fatalf("direct visitor IP = %q", got)
 	}
 }
 

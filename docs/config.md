@@ -282,7 +282,11 @@ disabled and Truster accepts the provider's chosen email and preserves its
   },
   "turnstile": {
     "site_key": "...",
-    "secret_name": "TRUSTER_TURNSTILE_SECRET"
+    "secret_name": "TRUSTER_TURNSTILE_SECRET",
+    "remote_ip": {
+      "source": "header",
+      "header": "CF-Connecting-IP"
+    }
   }
 }
 ```
@@ -318,6 +322,15 @@ Cloudflare Turnstile is optional, but strongly recommended when direct email
 authentication is enabled. Without a challenge provider, attackers can still
 cause unwanted email within the per-address rate limit. Future challenge-provider
 support is intended to keep this integration vendor-neutral.
+
+`remote_ip` is optional. When omitted, Truster does not send an IP address to
+Turnstile. If Truster is directly exposed to customers (not behind a load
+balancer for exmaple), use `{"source":"remote_addr"}`. If Turster is behind a
+reverse proxy, use `{"source":"header","header":"..."}` only when Truster is
+reachable exclusively through a trusted proxy that replaces the named header.
+A single address and comma-separated forwarding headers such as
+`X-Forwarded-For` are supported; for the latter, Truster uses the first address.
+If Truster is deployed behind a Cloudflare Tunnel, use `CF-Connecting-IP`.
 
 ## Clients and groups
 

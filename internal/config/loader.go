@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/mail"
+	"net/textproto"
 	"net/url"
 	"os"
 	"regexp"
@@ -617,8 +618,25 @@ func validate(cfg *Config) error {
 				return fmt.Errorf("email.smtp.tls_mode plaintext is only permitted when host is localhost")
 			}
 		}
-		if cfg.Email.Turnstile != nil && ((cfg.Email.Turnstile.SiteKey == "") != (cfg.Email.Turnstile.SecretName == "")) {
-			return fmt.Errorf("email.turnstile site_key and secret_name must be set together")
+		if cfg.Email.Turnstile != nil {
+			if (cfg.Email.Turnstile.SiteKey == "") != (cfg.Email.Turnstile.SecretName == "") {
+				return fmt.Errorf("email.turnstile site_key and secret_name must be set together")
+			}
+			if remoteIP := cfg.Email.Turnstile.RemoteIP; remoteIP != nil {
+				switch remoteIP.Source {
+				case "remote_addr":
+					if remoteIP.Header != "" {
+						return fmt.Errorf("email.turnstile.remote_ip.header is only valid for the header source")
+					}
+				case "header":
+					if !regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$").MatchString(remoteIP.Header) {
+						return fmt.Errorf("email.turnstile.remote_ip.header must be a valid HTTP header name")
+					}
+					remoteIP.Header = textproto.CanonicalMIMEHeaderKey(remoteIP.Header)
+				default:
+					return fmt.Errorf("email.turnstile.remote_ip.source must be remote_addr or header")
+				}
+			}
 		}
 	}
 

@@ -14,7 +14,6 @@ import (
 
 	"github.com/truster-dev/truster/v2/internal/authpolicy"
 	"github.com/truster-dev/truster/v2/internal/statedb"
-	"github.com/truster-dev/truster/v2/internal/templates"
 	"github.com/truster-dev/truster/v2/internal/upstream"
 )
 
@@ -131,7 +130,7 @@ func (s *Server) complete(w http.ResponseWriter, r *http.Request, state OAuthSta
 	resolved, err := s.policyResolver.ResolveClient(r.Context(), state.ClientID, true)
 	if err != nil {
 		if errors.Is(err, authpolicy.ErrDenied) {
-			s.renderErrorPage(w, "Login Failed", "Your account was not allowed.")
+			s.renderErrorPage(w, http.StatusForbidden, "Login Failed", "Your account was not allowed.")
 		} else {
 			http.Error(w, "auth temporarily unavailable", http.StatusServiceUnavailable)
 		}
@@ -148,7 +147,7 @@ func (s *Server) complete(w http.ResponseWriter, r *http.Request, state OAuthSta
 	_, policyErr := s.policyResolver.ResolveUser(r.Context(), resolved, strings.ToLower(email))
 	if policyErr != nil {
 		if errors.Is(policyErr, authpolicy.ErrDenied) {
-			s.renderErrorPage(w, "Login Failed", "Your account was not allowed.")
+			s.renderErrorPage(w, http.StatusForbidden, "Login Failed", "Your account was not allowed.")
 		} else {
 			http.Error(w, "auth temporarily unavailable", http.StatusServiceUnavailable)
 		}
@@ -192,11 +191,4 @@ func (s *Server) complete(w http.ResponseWriter, r *http.Request, state OAuthSta
 	}
 	u.RawQuery = q.Encode()
 	http.Redirect(w, r, u.String(), http.StatusFound)
-}
-
-// renderErrorPage renders a forbidden response with the configured error template.
-func (s *Server) renderErrorPage(w http.ResponseWriter, title, message string) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(403)
-	_ = s.templates.RenderPage(w, "error", templates.ErrorData{Title: title, Message: message})
 }

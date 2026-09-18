@@ -220,8 +220,15 @@ type SMTPConfig struct {
 
 // TurnstileConfig configures Cloudflare Turnstile verification.
 type TurnstileConfig struct {
-	SiteKey    string `json:"site_key"`
-	SecretName string `json:"secret_name"`
+	SiteKey    string                   `json:"site_key"`
+	SecretName string                   `json:"secret_name"`
+	RemoteIP   *TurnstileRemoteIPConfig `json:"remote_ip,omitempty"`
+}
+
+// TurnstileRemoteIPConfig selects the trusted source of the visitor IP sent to Turnstile.
+type TurnstileRemoteIPConfig struct {
+	Source string `json:"source"`
+	Header string `json:"header,omitempty"`
 }
 
 // ClientConfig defines OIDC client-specific configuration.

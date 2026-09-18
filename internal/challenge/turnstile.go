@@ -55,10 +55,17 @@ func (t Turnstile) Verify(ctx context.Context, response, remoteIP string) error 
 	}
 	defer func() { _ = resp.Body.Close() }()
 	var out struct {
-		Success bool `json:"success"`
+		Success    bool     `json:"success"`
+		ErrorCodes []string `json:"error-codes"`
 	}
-	if err = json.NewDecoder(resp.Body).Decode(&out); err != nil || !out.Success {
-		return fmt.Errorf("challenge rejected")
+	if err = json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return fmt.Errorf("decode challenge response: %w", err)
+	}
+	if !out.Success {
+		if len(out.ErrorCodes) == 0 {
+			return fmt.Errorf("challenge rejected")
+		}
+		return fmt.Errorf("challenge rejected: %s", strings.Join(out.ErrorCodes, ","))
 	}
 	return nil
 }

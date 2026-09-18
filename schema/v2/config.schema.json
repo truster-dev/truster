@@ -707,6 +707,33 @@
           "type": "string",
           "minLength": 1,
           "description": "Secret containing the Cloudflare Turnstile server-side key."
+        },
+        "remote_ip": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source"],
+          "properties": {
+            "source": {
+              "type": "string",
+              "enum": ["remote_addr", "header"],
+              "description": "Trusted source of the visitor IP address sent to Turnstile."
+            },
+            "header": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Trusted proxy header used by the header source. For comma-separated forwarding headers, Truster uses the first address."
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": { "source": { "const": "header" } },
+                "required": ["source"]
+              },
+              "then": { "required": ["header"] },
+              "else": { "not": { "required": ["header"] } }
+            }
+          ]
         }
       }
     },
