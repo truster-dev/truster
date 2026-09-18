@@ -5,6 +5,9 @@
 package oidc
 
 import (
+	"bytes"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/truster-dev/truster/v2/internal/config"
@@ -38,5 +41,23 @@ func TestStateSatisfiesClientPolicyRequiresPARProvenance(t *testing.T) {
 	state.PushedAuthorization = true
 	if !stateSatisfiesClientPolicy(&state, client) {
 		t.Fatal("pushed authorization state did not satisfy require_par policy")
+	}
+}
+
+// TestLogDPoPReplayIncludesSafeIdentifiers verifies replay logs retain protocol identifiers only.
+func TestLogDPoPReplayIncludesSafeIdentifiers(t *testing.T) {
+	var logs bytes.Buffer
+	server := &Server{logger: slog.New(slog.NewJSONHandler(&logs, nil))}
+	server.logDPoPReplay("token", "client")
+	output := logs.String()
+	for _, expected := range []string{`"endpoint":"token"`, `"client_id":"client"`} {
+		if !strings.Contains(output, expected) {
+			t.Errorf("safe field %s missing from %s", expected, output)
+		}
+	}
+	for _, forbidden := range []string{"remote_addr", "remote_ip", "user_agent", "sid"} {
+		if strings.Contains(output, forbidden) {
+			t.Errorf("private field %q present in %s", forbidden, output)
+		}
 	}
 }

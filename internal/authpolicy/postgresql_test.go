@@ -55,7 +55,7 @@ func TestPostgreSQLOperationLogs(t *testing.T) {
 	}
 
 	logs := output.String()
-	for _, fragment := range []string{`"msg":"policy database query"`, `"query":"client_exists"`, `"outcome":"denied"`, `"cache":"miss"`, `"cache":"hit"`, `"query":"user_access"`, `"query":"trust_bindings"`, `"outcome":"indeterminate"`, `"cache":"bypass"`, `"rows":1`, `"issuer_id":"issuer"`} {
+	for _, fragment := range []string{`"msg":"policy database query"`, `"query":"client_exists"`, `"outcome":"denied"`, `"cache":"miss"`, `"cache":"hit"`, `"query":"user_access"`, `"query":"trust_bindings"`, `"outcome":"indeterminate"`, `"cache":"bypass"`, `"rows":1`, `"client_id":"client"`, `"issuer_id":"issuer"`} {
 		if !strings.Contains(logs, fragment) {
 			t.Errorf("logs missing %s: %s", fragment, logs)
 		}

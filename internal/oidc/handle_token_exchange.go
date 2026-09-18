@@ -40,7 +40,11 @@ func (s *Server) exchangeTrustedToken(w http.ResponseWriter, r *http.Request) {
 			if authpolicy.IsIndeterminate(err) && !errors.Is(err, authpolicy.ErrDenied) {
 				outcome = "indeterminate"
 			}
-			s.logger.Info("trust exchange", "client_id", clientID, "result", outcome)
+			attributes := []any{"client_id", clientID, "result", outcome}
+			if result != nil {
+				attributes = append(attributes, "issuer_id", result.IssuerID, "issuer", result.Issuer)
+			}
+			s.logger.Info("trust exchange", attributes...)
 		}
 		if authpolicy.IsIndeterminate(err) && !errors.Is(err, authpolicy.ErrDenied) {
 			oauthError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "auth temporarily unavailable")
@@ -59,7 +63,7 @@ func (s *Server) exchangeTrustedToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.logger != nil {
-		attributes := []any{"issuer", result.Issuer, "client_id", clientID, "binding", result.Binding.ID, "subject", result.Binding.Subject, "result", "allowed"}
+		attributes := []any{"issuer_id", result.IssuerID, "issuer", result.Issuer, "client_id", clientID, "binding", result.Binding.ID, "result", "allowed"}
 		if result.Binding.Policy != "" {
 			attributes = append(attributes, "policy", result.Binding.Policy)
 		}

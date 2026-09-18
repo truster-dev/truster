@@ -73,7 +73,7 @@ func (s *Server) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 		}
 		err = s.reserveDPoP(proof, now)
 		if errors.Is(err, dpop.ErrReplay) || errors.Is(err, dpop.ErrReplayCacheFull) {
-			s.logDPoPReplay("revoke", clientID, r)
+			s.logDPoPReplay("revoke", clientID)
 			oauthError(w, http.StatusBadRequest, "invalid_dpop_proof", "DPoP proof is invalid")
 			return
 		}

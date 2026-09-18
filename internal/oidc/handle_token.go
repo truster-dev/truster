@@ -11,7 +11,6 @@ import (
 	"github.com/truster-dev/truster/v2/internal/config"
 	"github.com/truster-dev/truster/v2/internal/dpop"
 	"mime"
-	"net"
 	"net/http"
 	"time"
 
@@ -31,7 +30,6 @@ const (
 type auditResponseWriter struct {
 	http.ResponseWriter
 	status int
-	sid    string
 }
 
 // WriteHeader records and forwards an HTTP status.
@@ -101,13 +99,9 @@ func (s *Server) HandleToken(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		audit := &auditResponseWriter{ResponseWriter: w}
-		host, _, _ := net.SplitHostPort(r.RemoteAddr)
-		if host == "" {
-			host = r.RemoteAddr
-		}
 		defer func() {
 			if s.logger != nil {
-				s.logger.Info("refresh attempt", "result", audit.status, "client_id", r.PostForm.Get("client_id"), "remote_ip", host, "user_agent", r.UserAgent(), "sid", audit.sid)
+				s.logger.Info("refresh attempt", "status", audit.status, "client_id", r.PostForm.Get("client_id"))
 			}
 		}()
 		if r.PostForm.Get("refresh_token") == "" || r.PostForm.Get("client_id") == "" {
@@ -164,14 +158,13 @@ func (s *Server) HandleToken(w http.ResponseWriter, r *http.Request) {
 			}
 			if reserveErr := s.reserveDPoP(proof, time.Now().UTC()); reserveErr != nil {
 				if errors.Is(reserveErr, dpop.ErrReplay) || errors.Is(reserveErr, dpop.ErrReplayCacheFull) {
-					s.logDPoPReplay("token", inspected.ClientID, r)
+					s.logDPoPReplay("token", inspected.ClientID)
 					oauthError(audit, 400, "invalid_dpop_proof", "DPoP proof is invalid")
 				}
 				return
 			}
 		}
 		result, exchangeErr := s.refresh.Exchange(r.Context(), refreshdomain.Request{Token: r.PostForm.Get("refresh_token"), ClientID: r.PostForm.Get("client_id"), Scope: r.PostForm.Get("scope")})
-		audit.sid = result.SID
 		if exchangeErr != nil {
 			if exchangeErr.RetryAfter != "" {
 				audit.Header().Set("Retry-After", exchangeErr.RetryAfter)
@@ -266,7 +259,7 @@ func (s *Server) exchangeCode(w http.ResponseWriter, r *http.Request) {
 	if proof != nil {
 		if err = s.reserveDPoP(proof, time.Now().UTC()); err != nil {
 			if errors.Is(err, dpop.ErrReplay) || errors.Is(err, dpop.ErrReplayCacheFull) {
-				s.logDPoPReplay("token", payload.ClientID, r)
+				s.logDPoPReplay("token", payload.ClientID)
 				oauthError(w, 400, "invalid_dpop_proof", "DPoP proof is invalid")
 			}
 			return

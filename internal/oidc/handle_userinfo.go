@@ -78,7 +78,11 @@ func (s *Server) authenticateAccessToken(r *http.Request, endpoint string) (jwt.
 	}
 	err = s.reserveDPoP(proof, time.Now().UTC())
 	if errors.Is(err, dpop.ErrReplay) || errors.Is(err, dpop.ErrReplayCacheFull) {
-		s.logDPoPReplay("userinfo", token.Audience()[0], r)
+		clientID := ""
+		if audience := token.Audience(); len(audience) == 1 {
+			clientID = audience[0]
+		}
+		s.logDPoPReplay("userinfo", clientID)
 		return nil, &accessAuthError{status: 401, scheme: "DPoP", code: "invalid_dpop_proof", alg: supportedDPoPAlgorithmChallenge}
 	}
 	return token, nil

@@ -226,7 +226,7 @@ func TestTokenExchangePolicyResolver(t *testing.T) {
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("indeterminate status=%d body=%s", response.Code, response.Body.String())
 	}
-	if !strings.Contains(logs.String(), `"result":"indeterminate"`) || strings.Contains(logs.String(), `"result":"denied"`) {
+	if !strings.Contains(logs.String(), `"client_id":"client"`) || !strings.Contains(logs.String(), `"result":"indeterminate"`) || strings.Contains(logs.String(), `"result":"denied"`) {
 		t.Fatalf("indeterminate exchange log=%s", logs.String())
 	}
 	fake.trustErr = nil
@@ -255,7 +255,9 @@ func TestTokenExchangeUsesSourceAgnosticTrust(t *testing.T) {
 func TestTokenExchangeProductionPath(t *testing.T) {
 	issuer := newTokenExchangeIssuer(t)
 	server, signingKey := tokenExchangeServer(t, issuer, 1)
-	response := tokenExchangeRequest(server, validTokenExchangeForm(issuer.sign(nil)))
+	var logs bytes.Buffer
+	server.logger = slog.New(slog.NewJSONHandler(&logs, nil))
+	response := tokenExchangeRequest(server, validTokenExchangeForm(issuer.sign(map[string]any{"run_id": json.Number("12345")})))
 	if response.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
@@ -298,6 +300,17 @@ func TestTokenExchangeProductionPath(t *testing.T) {
 	}
 	if _, exists := verified.Get("sid"); exists {
 		t.Fatal("trusted token unexpectedly contains sid")
+	}
+	output := logs.String()
+	for _, safe := range []string{`"issuer_id":"local"`, `"issuer":"` + issuer.server.URL + `"`, `"client_id":"client"`, `"binding":"binding-policy-a"`, `"policy":"policy-a"`, `"run_id":"12345"`, `"result":"allowed"`} {
+		if !strings.Contains(output, safe) {
+			t.Errorf("safe audit field %s missing from %s", safe, output)
+		}
+	}
+	for _, private := range []string{"upstream-user", "trusted:builder"} {
+		if strings.Contains(output, private) {
+			t.Errorf("audit log leaked subject %q: %s", private, output)
+		}
 	}
 }
 

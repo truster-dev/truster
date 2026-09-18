@@ -5,8 +5,6 @@
 package oidc
 
 import (
-	"net/http"
-
 	"github.com/truster-dev/truster/v2/internal/config"
 )
 
@@ -37,9 +35,9 @@ func validateDPoPBinding(client config.ClientConfig, jkt string) bool {
 	return client.DPoP.Mode == "required"
 }
 
-// logDPoPReplay records a distinct endpoint-boundary security event without proof identifiers.
-func (s *Server) logDPoPReplay(endpoint, clientID string, r *http.Request) {
+// logDPoPReplay records a distinct endpoint-boundary security event without request or proof identifiers.
+func (s *Server) logDPoPReplay(endpoint, clientID string) {
 	if s.logger != nil {
-		s.logger.Warn("DPoP proof replay rejected", "endpoint", endpoint, "client_id", clientID, "remote_addr", r.RemoteAddr, "user_agent", r.UserAgent())
+		s.logger.Warn("DPoP proof replay rejected", "endpoint", endpoint, "client_id", clientID)
 	}
 }

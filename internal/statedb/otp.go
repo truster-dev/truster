@@ -15,6 +15,15 @@ import (
 	"time"
 )
 
+var (
+	// ErrInvalidOTPChallenge identifies an unknown, expired, consumed, or attempt-limited challenge.
+	ErrInvalidOTPChallenge = errors.New("invalid OTP challenge")
+	// ErrInvalidOTPCode identifies a code mismatch for an otherwise active challenge.
+	ErrInvalidOTPCode = errors.New("invalid OTP code")
+	// ErrOTPSendLimit identifies an address that exceeded the hourly OTP send quota.
+	ErrOTPSendLimit = errors.New("OTP send limit exceeded")
+)
+
 // OTPFlow preserves the authorization and identity context of an OTP challenge.
 type OTPFlow struct {
 	FlowID              string
@@ -73,7 +82,7 @@ func (s *Store) CreateOTP(challengeID, email, code string, flow OTPFlow, secret 
 		return time.Time{}, err
 	}
 	if count >= 5 {
-		return time.Time{}, fmt.Errorf("email send limit exceeded")
+		return time.Time{}, ErrOTPSendLimit
 	}
 	_, err = tx.Exec(`INSERT INTO {{state}}otp_challenges(challenge_id,email,code_hmac,context,created_at,sent_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7)`, challengeID, email, otpMAC(secret, challengeID, code), string(context), now, now, expiresAt)
 	if err != nil {
@@ -148,17 +157,21 @@ func (s *Store) ResendOTP(challengeID, code string, secret []byte, now time.Time
 	return flow, newExpiresAt, nil
 }
 
-// OTPFlow retrieves the authorization context for an active challenge.
-func (s *Store) OTPFlow(challengeID string) (OTPFlow, error) {
+// OTPFlow retrieves the authorization context and expiry for an active challenge.
+func (s *Store) OTPFlow(challengeID string, now time.Time) (OTPFlow, time.Time, error) {
 	var raw []byte
-	if err := s.db.QueryRow(`SELECT context FROM {{state}}otp_challenges WHERE challenge_id=$1`, challengeID).Scan(&raw); err != nil {
-		return OTPFlow{}, fmt.Errorf("invalid challenge")
+	var expiresAt time.Time
+	if err := s.db.QueryRow(`SELECT context,expires_at FROM {{state}}otp_challenges WHERE challenge_id=$1 AND expires_at>$2 AND attempts<5`, challengeID, now).Scan(&raw, &expiresAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return OTPFlow{}, time.Time{}, ErrInvalidOTPChallenge
+		}
+		return OTPFlow{}, time.Time{}, fmt.Errorf("load OTP flow: %w", err)
 	}
 	var flow OTPFlow
 	if err := json.Unmarshal(raw, &flow); err != nil {
-		return OTPFlow{}, fmt.Errorf("decode OTP flow: %w", err)
+		return OTPFlow{}, time.Time{}, fmt.Errorf("decode OTP flow: %w", err)
 	}
-	return flow, nil
+	return flow, expiresAt, nil
 }
 
 // ConsumeOTP atomically limits attempts and makes successful codes single-use.
@@ -174,12 +187,12 @@ func (s *Store) ConsumeOTP(challengeID, code string, secret []byte, now time.Tim
 	var expires time.Time
 	if err = tx.QueryRow(`SELECT code_hmac,context,attempts,expires_at FROM {{state}}otp_challenges WHERE challenge_id=$1`+s.lockRows(), challengeID).Scan(&mac, &context, &attempts, &expires); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return OTPFlow{}, fmt.Errorf("invalid challenge")
+			return OTPFlow{}, ErrInvalidOTPChallenge
 		}
 		return OTPFlow{}, fmt.Errorf("load OTP challenge: %w", err)
 	}
 	if !now.Before(expires) || attempts >= 5 {
-		return OTPFlow{}, fmt.Errorf("invalid challenge")
+		return OTPFlow{}, ErrInvalidOTPChallenge
 	}
 	if !hmac.Equal(mac, otpMAC(secret, challengeID, code)) {
 		result, updateErr := tx.Exec(`UPDATE {{state}}otp_challenges SET attempts=attempts+1 WHERE challenge_id=$1 AND attempts=$2`, challengeID, attempts)
@@ -187,12 +200,15 @@ func (s *Store) ConsumeOTP(challengeID, code string, secret []byte, now time.Tim
 			return OTPFlow{}, updateErr
 		}
 		if affected, rowsErr := result.RowsAffected(); rowsErr != nil || affected != 1 {
-			return OTPFlow{}, fmt.Errorf("invalid challenge")
+			return OTPFlow{}, ErrInvalidOTPChallenge
 		}
 		if err = tx.Commit(); err != nil {
 			return OTPFlow{}, err
 		}
-		return OTPFlow{}, fmt.Errorf("invalid code")
+		if attempts+1 >= 5 {
+			return OTPFlow{}, ErrInvalidOTPChallenge
+		}
+		return OTPFlow{}, ErrInvalidOTPCode
 	}
 	var flow OTPFlow
 	if err = json.Unmarshal(context, &flow); err != nil {
@@ -203,7 +219,7 @@ func (s *Store) ConsumeOTP(challengeID, code string, secret []byte, now time.Tim
 		return OTPFlow{}, err
 	}
 	if affected, rowsErr := result.RowsAffected(); rowsErr != nil || affected != 1 {
-		return OTPFlow{}, fmt.Errorf("invalid challenge")
+		return OTPFlow{}, ErrInvalidOTPChallenge
 	}
 	if err = tx.Commit(); err != nil {
 		return OTPFlow{}, err

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/truster-dev/truster/v2/internal/authpolicy"
@@ -184,7 +185,7 @@ func TestHandleAuthorizeRedirectsDuplicateDPoPThumbprint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if location.Query().Get("error") != "invalid_request" || location.Query().Get("state") != "downstream-state" {
+	if location.Query().Get("error") != "invalid_request" || location.Query().Get("error_description") == "" || location.Query().Get("state") != "downstream-state" {
 		t.Fatalf("redirect query = %v", location.Query())
 	}
 }
@@ -222,7 +223,7 @@ func TestHandleAuthorizeRejectsEmptyPushedRequest(t *testing.T) {
 	request.URL.RawQuery += "&request_uri="
 	response := httptest.NewRecorder()
 	server.HandleAuthorize(response, request)
-	if response.Code != http.StatusBadRequest || response.Body.String() != "invalid_request\n" {
+	if response.Code != http.StatusBadRequest || response.Header().Get("Content-Type") != "text/html; charset=utf-8" || !strings.Contains(response.Body.String(), "Unable to continue") {
 		t.Fatalf("response = %d %q", response.Code, response.Body.String())
 	}
 }

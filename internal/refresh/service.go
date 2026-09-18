@@ -80,7 +80,7 @@ func (s *Service) Exchange(ctx context.Context, req Request) (Result, *Failure) 
 	grant, expiry, err := s.store.PrepareRefresh(current, req.ClientID, now)
 	if err != nil {
 		if errors.Is(err, statedb.ErrRefreshReplay) {
-			s.logger.Warn("refresh token replay detected", "client_id", req.ClientID, "sid", grant.SID)
+			s.logger.Warn("refresh token replay detected", "client_id", req.ClientID)
 			_, _, rotateErr := s.store.RotateRefreshToken(current, statedb.RefreshMaterial{}, req.ClientID, now)
 			if rotateErr != nil && !errors.Is(rotateErr, statedb.ErrRefreshReplay) && !errors.Is(rotateErr, statedb.ErrInvalidGrant) {
 				return Result{}, &Failure{Code: Temporary, Description: "storage unavailable"}
@@ -198,7 +198,7 @@ func (s *Service) connector(ctx context.Context, current statedb.RefreshMaterial
 	}
 	if err != nil {
 		if errors.Is(err, statedb.ErrRefreshReplay) {
-			s.logger.Warn("refresh token replay detected", "client_id", prepared.ClientID, "sid", prepared.SID)
+			s.logger.Warn("refresh token replay detected", "client_id", prepared.ClientID)
 		}
 		return Result{SID: prepared.SID}, s.storageError(err)
 	}

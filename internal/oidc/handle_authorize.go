@@ -18,12 +18,25 @@ import (
 	"github.com/truster-dev/truster/v2/internal/templates"
 )
 
+// oauthAuthorizationError identifies an OAuth authorization endpoint error code.
+type oauthAuthorizationError string
+
+const (
+	oauthAuthorizationErrorAccessDenied            oauthAuthorizationError = "access_denied"
+	oauthAuthorizationErrorConsentRequired         oauthAuthorizationError = "consent_required"
+	oauthAuthorizationErrorInvalidRequest          oauthAuthorizationError = "invalid_request"
+	oauthAuthorizationErrorInvalidScope            oauthAuthorizationError = "invalid_scope"
+	oauthAuthorizationErrorServer                  oauthAuthorizationError = "server_error"
+	oauthAuthorizationErrorTemporarilyUnavailable  oauthAuthorizationError = "temporarily_unavailable"
+	oauthAuthorizationErrorUnsupportedResponseType oauthAuthorizationError = "unsupported_response_type"
+)
+
 // HandleAuthorize validates a downstream authorization request and starts connector selection.
 func (s *Server) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	if requestURIs, present := q["request_uri"]; present {
 		if len(q) != 2 || len(q["client_id"]) != 1 || len(requestURIs) != 1 || q.Get("client_id") == "" || requestURIs[0] == "" {
-			http.Error(w, "invalid_request", http.StatusBadRequest)
+			s.renderBrowserError(w, http.StatusBadRequest, failureInvalidPushedAuthorizationRequest)
 			return
 		}
 		s.handlePushedAuthorize(w, r, q.Get("client_id"), requestURIs[0])
@@ -31,50 +44,50 @@ func (s *Server) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 	}
 	clientID := q.Get("client_id")
 	if len(q["client_id"]) != 1 || len(q["redirect_uri"]) != 1 {
-		http.Error(w, "invalid_request", http.StatusBadRequest)
+		s.renderBrowserError(w, http.StatusBadRequest, failureInvalidAuthorizationRequest)
 		return
 	}
 	resolved, err := s.policyResolver.ResolveClient(r.Context(), clientID, false)
 	if errors.Is(err, authpolicy.ErrDenied) {
-		http.Error(w, "unknown client_id", 400)
+		s.renderBrowserError(w, http.StatusBadRequest, failureUnknownClient)
 		return
 	}
 	if err != nil {
-		http.Error(w, "auth temporarily unavailable", http.StatusServiceUnavailable)
+		s.renderBrowserError(w, http.StatusServiceUnavailable, failureClientPolicyUnavailable)
 		return
 	}
 	client := resolved.Config
 	if client.RequirePAR {
-		http.Error(w, "invalid_request: pushed authorization request required", http.StatusBadRequest)
+		s.renderBrowserError(w, http.StatusBadRequest, failurePushedAuthorizationRequired)
 		return
 	}
 	redirect := q.Get("redirect_uri")
 	if redirect == "" || !s.isValidRedirectURI(redirect, client) {
-		http.Error(w, "invalid redirect_uri", 400)
+		s.renderBrowserError(w, http.StatusBadRequest, failureInvalidRedirectURI)
 		return
 	}
 	for _, values := range q {
 		if len(values) != 1 {
-			redirectAuthorizationError(w, r, redirect, q.Get("state"), "invalid_request")
+			s.redirectAuthorizationError(w, r, redirect, q.Get("state"), oauthAuthorizationErrorInvalidRequest, failureAuthorizationParameterDuplicate)
 			return
 		}
 	}
 	if len(r.Header.Values("DPoP")) != 0 {
-		redirectAuthorizationError(w, r, redirect, q.Get("state"), "invalid_request")
+		s.redirectAuthorizationError(w, r, redirect, q.Get("state"), oauthAuthorizationErrorInvalidRequest, failureAuthorizationDPoPHeaderUnexpected)
 		return
 	}
 	dpopJKT := q.Get("dpop_jkt")
 	if values, present := q["dpop_jkt"]; present && (len(values) != 1 || values[0] == "") {
-		redirectAuthorizationError(w, r, redirect, q.Get("state"), "invalid_request")
+		s.redirectAuthorizationError(w, r, redirect, q.Get("state"), oauthAuthorizationErrorInvalidRequest, failureAuthorizationDPoPJKT)
 		return
 	}
 	dpopJKT, dpopError := selectDPoP(client.DPoP.Mode, dpopJKT, false)
 	if dpopError != "" {
-		redirectAuthorizationError(w, r, redirect, q.Get("state"), dpopError)
+		s.redirectAuthorizationError(w, r, redirect, q.Get("state"), dpopError, failureAuthorizationDPoP)
 		return
 	}
 	if q.Get("response_type") != "code" {
-		redirectAuthorizationError(w, r, redirect, q.Get("state"), "unsupported_response_type")
+		s.redirectAuthorizationError(w, r, redirect, q.Get("state"), oauthAuthorizationErrorUnsupportedResponseType, failureAuthorizationResponseTypeUnsupported)
 		return
 	}
 	requested := strings.Fields(q.Get("scope"))
@@ -84,22 +97,22 @@ func (s *Server) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 		hasOpenID = hasOpenID || scope == "openid"
 		offline = offline || scope == "offline_access"
 		if !allowed[scope] && scope != "offline_access" {
-			redirectAuthorizationError(w, r, redirect, q.Get("state"), "invalid_scope")
+			s.redirectAuthorizationError(w, r, redirect, q.Get("state"), oauthAuthorizationErrorInvalidScope, failureAuthorizationScope)
 			return
 		}
 	}
 	if !hasOpenID || (offline && (!client.RefreshTokens.Enabled || !client.RefreshTokens.AllowOfflineAccess)) {
-		redirectAuthorizationError(w, r, redirect, q.Get("state"), "invalid_scope")
+		s.redirectAuthorizationError(w, r, redirect, q.Get("state"), oauthAuthorizationErrorInvalidScope, failureAuthorizationScope)
 		return
 	}
 	if offline && q.Get("prompt") == "none" {
-		redirectAuthorizationError(w, r, redirect, q.Get("state"), "consent_required")
+		s.redirectAuthorizationError(w, r, redirect, q.Get("state"), oauthAuthorizationErrorConsentRequired, failureAuthorizationConsentRequired)
 		return
 	}
 	sort.Strings(requested)
 	challenge := q.Get("code_challenge")
 	if challenge == "" || q.Get("code_challenge_method") != "S256" {
-		http.Error(w, "PKCE S256 is required", 400)
+		s.redirectAuthorizationError(w, r, redirect, q.Get("state"), oauthAuthorizationErrorInvalidRequest, failureAuthorizationPKCE)
 		return
 	}
 	mode := ""
@@ -113,29 +126,28 @@ func (s *Server) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 	if offline {
 		token, err := s.authCodeMgr.EncodeState(state)
 		if err != nil {
-			http.Error(w, "internal error", 500)
+			s.renderBrowserError(w, http.StatusInternalServerError, failureConsentStateEncode)
 			return
 		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = s.templates.RenderPage(w, "consent", templates.ConsentData{Title: "Allow offline access", State: token, ClientID: clientID})
+		s.renderBrowserPage(w, http.StatusOK, "consent", templates.ConsentData{Title: "Allow offline access", State: token, ClientID: clientID}, failureConsentRender)
 		return
 	}
 	s.continueAuthorization(w, r, state)
 }
 
 // selectDPoP validates a canonical thumbprint and applies the configured client mode.
-func selectDPoP(mode, thumbprint string, proofPresent bool) (string, string) {
+func selectDPoP(mode, thumbprint string, proofPresent bool) (string, oauthAuthorizationError) {
 	selected := thumbprint != "" || proofPresent
 	if mode == "disabled" && selected {
-		return "", "invalid_request"
+		return "", oauthAuthorizationErrorInvalidRequest
 	}
 	if mode == "required" && !selected {
-		return "", "invalid_request"
+		return "", oauthAuthorizationErrorInvalidRequest
 	}
 	if thumbprint != "" {
 		decoded, err := base64.RawURLEncoding.DecodeString(thumbprint)
 		if err != nil || len(decoded) != 32 || base64.RawURLEncoding.EncodeToString(decoded) != thumbprint {
-			return "", "invalid_request"
+			return "", oauthAuthorizationErrorInvalidRequest
 		}
 	}
 	if !selected {
@@ -149,9 +161,9 @@ func (s *Server) handlePushedAuthorize(w http.ResponseWriter, r *http.Request, c
 	resolved, err := s.policyResolver.ResolveClient(r.Context(), clientID, false)
 	if err != nil {
 		if errors.Is(err, authpolicy.ErrDenied) {
-			http.Error(w, "invalid_request", http.StatusBadRequest)
+			s.renderBrowserError(w, http.StatusBadRequest, failureUnknownPushedAuthorizationClient)
 		} else {
-			http.Error(w, "temporarily_unavailable", http.StatusServiceUnavailable)
+			s.renderBrowserError(w, http.StatusServiceUnavailable, failurePushedAuthorizationPolicyUnavailable)
 		}
 		return
 	}
@@ -159,19 +171,19 @@ func (s *Server) handlePushedAuthorize(w http.ResponseWriter, r *http.Request, c
 	pushed, err := s.store.ConsumePushedRequest(requestURI, clientID, now)
 	if err != nil {
 		if errors.Is(err, statedb.ErrInvalidGrant) {
-			http.Error(w, "invalid_request", http.StatusBadRequest)
+			s.renderBrowserError(w, http.StatusBadRequest, failurePushedAuthorization)
 		} else {
-			http.Error(w, "temporarily_unavailable", http.StatusServiceUnavailable)
+			s.renderBrowserError(w, http.StatusServiceUnavailable, failurePushedAuthorizationStoreUnavailable)
 		}
 		return
 	}
 	client := resolved.Config
 	if !s.isValidRedirectURI(pushed.RedirectURI, client) {
-		http.Error(w, "invalid_request", http.StatusBadRequest)
+		s.renderBrowserError(w, http.StatusBadRequest, failurePushedAuthorizationRedirect)
 		return
 	}
 	if (client.DPoP.Mode == "required") != (pushed.DPoPJKT != "") {
-		redirectAuthorizationError(w, r, pushed.RedirectURI, pushed.State, "invalid_request")
+		s.redirectAuthorizationError(w, r, pushed.RedirectURI, pushed.State, oauthAuthorizationErrorInvalidRequest, failureAuthorizationPARRequest)
 		return
 	}
 	mode := ""
@@ -180,24 +192,23 @@ func (s *Server) handlePushedAuthorize(w http.ResponseWriter, r *http.Request, c
 	}
 	if strings.Contains(" "+pushed.Scopes+" ", " offline_access ") {
 		if !client.RefreshTokens.Enabled || !client.RefreshTokens.AllowOfflineAccess {
-			redirectAuthorizationError(w, r, pushed.RedirectURI, pushed.State, "invalid_request")
+			s.redirectAuthorizationError(w, r, pushed.RedirectURI, pushed.State, oauthAuthorizationErrorInvalidRequest, failureAuthorizationPARRequest)
 			return
 		}
 		mode = "offline"
 	}
 	if strings.Contains(" "+pushed.Scopes+" ", " offline_access ") && pushed.Prompt == "none" {
-		redirectAuthorizationError(w, r, pushed.RedirectURI, pushed.State, "consent_required")
+		s.redirectAuthorizationError(w, r, pushed.RedirectURI, pushed.State, oauthAuthorizationErrorConsentRequired, failureAuthorizationConsentRequired)
 		return
 	}
 	state := OAuthState{ClientID: clientID, RedirectURI: pushed.RedirectURI, CodeChallenge: pushed.CodeChallenge, Nonce: pushed.Nonce, OIDCState: pushed.State, Scopes: pushed.Scopes, RefreshMode: mode, AuthTime: now, Purpose: "authorize", DPoPJKT: pushed.DPoPJKT, PushedAuthorization: true}
 	if strings.Contains(" "+state.Scopes+" ", " offline_access ") {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		token, encodeErr := s.authCodeMgr.EncodeState(state)
 		if encodeErr != nil {
-			http.Error(w, "internal error", 500)
+			s.renderBrowserError(w, http.StatusInternalServerError, failurePushedConsentStateEncode)
 			return
 		}
-		_ = s.templates.RenderPage(w, "consent", templates.ConsentData{Title: "Allow offline access", State: token, ClientID: clientID})
+		s.renderBrowserPage(w, http.StatusOK, "consent", templates.ConsentData{Title: "Allow offline access", State: token, ClientID: clientID}, failurePushedConsentRender)
 		return
 	}
 	s.continueAuthorization(w, r, state)
@@ -206,19 +217,19 @@ func (s *Server) handlePushedAuthorize(w http.ResponseWriter, r *http.Request, c
 // HandleConsent accepts or denies explicit offline-access consent.
 func (s *Server) HandleConsent(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		s.renderBrowserError(w, http.StatusMethodNotAllowed, failureConsentMethod)
 		return
 	}
-	if !parseBrowserForm(w, r, "state", "decision") {
+	if !s.parseBrowserForm(w, r, "state", "decision") {
 		return
 	}
 	state, err := s.authCodeMgr.DecodeState(r.PostForm.Get("state"))
 	if err != nil || state.RefreshMode != "offline" {
-		http.Error(w, "invalid state", 400)
+		s.renderBrowserError(w, http.StatusBadRequest, failureConsentState)
 		return
 	}
 	if r.PostForm.Get("decision") != "accept" {
-		redirectAuthorizationError(w, r, state.RedirectURI, state.OIDCState, "access_denied")
+		s.redirectAuthorizationError(w, r, state.RedirectURI, state.OIDCState, oauthAuthorizationErrorAccessDenied, failureAuthorizationConsentDenied)
 		return
 	}
 	state.OfflineConsent = true
@@ -236,14 +247,36 @@ func (s *Server) continueAuthorization(w http.ResponseWriter, r *http.Request, s
 }
 
 // redirectAuthorizationError returns an OAuth authorization error to a validated redirect URI.
-func redirectAuthorizationError(w http.ResponseWriter, r *http.Request, redirect, state, code string) {
+func (s *Server) redirectAuthorizationError(w http.ResponseWriter, r *http.Request, redirect, state string, code oauthAuthorizationError, reason browserFailureReason, attributes ...any) {
 	u, err := url.Parse(redirect)
 	if err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
+		s.renderBrowserError(w, http.StatusBadRequest, failureAuthorizationRedirect)
 		return
 	}
+	status := http.StatusBadRequest
+	description := "Sign-in could not be completed. Return to the application and try again."
+	switch code {
+	case oauthAuthorizationErrorAccessDenied:
+		description = "Sign-in was not completed."
+	case oauthAuthorizationErrorConsentRequired:
+		description = "Sign-in requires your consent."
+	case oauthAuthorizationErrorInvalidRequest:
+		description = "The sign-in request is invalid or has expired."
+	case oauthAuthorizationErrorInvalidScope:
+		description = "The application requested unsupported access."
+	case oauthAuthorizationErrorServer:
+		status = http.StatusInternalServerError
+		description = "Sign-in is temporarily unavailable. Try again shortly."
+	case oauthAuthorizationErrorTemporarilyUnavailable:
+		status = http.StatusServiceUnavailable
+		description = "Sign-in is temporarily unavailable. Try again shortly."
+	case oauthAuthorizationErrorUnsupportedResponseType:
+		description = "The application requested an unsupported sign-in response."
+	}
+	s.logBrowserFailure(status, reason, attributes...)
 	query := u.Query()
-	query.Set("error", code)
+	query.Set("error", string(code))
+	query.Set("error_description", description)
 	if state != "" {
 		query.Set("state", state)
 	}

@@ -32,6 +32,7 @@ func TestSecurityHeadersPreventFraming(t *testing.T) {
 
 // TestParseBrowserFormRejectsUnsafeRequests verifies form type, size, and field uniqueness checks.
 func TestParseBrowserFormRejectsUnsafeRequests(t *testing.T) {
+	server := &Server{}
 	tests := []struct {
 		name, contentType, body string
 	}{
@@ -44,7 +45,7 @@ func TestParseBrowserFormRejectsUnsafeRequests(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "/consent", strings.NewReader(test.body))
 			request.Header.Set("Content-Type", test.contentType)
 			response := httptest.NewRecorder()
-			if parseBrowserForm(response, request, "state") || response.Code != http.StatusBadRequest {
+			if server.parseBrowserForm(response, request, "state") || response.Code != http.StatusBadRequest {
 				t.Fatalf("accepted unsafe form with status %d", response.Code)
 			}
 		})

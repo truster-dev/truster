@@ -119,7 +119,7 @@ func (s *Server) HandlePAR(w http.ResponseWriter, r *http.Request) {
 	proofPresent := len(proofHeaders) == 1
 	selectedJKT, oauthErr := selectDPoP(c.DPoP.Mode, thumbprint, proofPresent)
 	if oauthErr != "" {
-		writeOAuthJSON(w, 400, oauthErr)
+		writeOAuthJSON(w, 400, string(oauthErr))
 		return
 	}
 	var proof *dpop.Proof
@@ -147,7 +147,7 @@ func (s *Server) HandlePAR(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		if errors.Is(err, dpop.ErrReplay) || errors.Is(err, dpop.ErrReplayCacheFull) {
-			s.logDPoPReplay("par", clientID, r)
+			s.logDPoPReplay("par", clientID)
 			writeOAuthJSON(w, 400, "invalid_dpop_proof")
 			return
 		}

@@ -18,7 +18,7 @@ import (
 func (s *Server) renderSelector(w http.ResponseWriter, state OAuthState, ids []string) {
 	token, err := s.authCodeMgr.EncodeState(state)
 	if err != nil {
-		http.Error(w, "internal error", 500)
+		s.renderBrowserError(w, http.StatusInternalServerError, failureSelectorStateEncode)
 		return
 	}
 	items := make([]templates.ConnectorData, 0, len(ids))
@@ -30,10 +30,7 @@ func (s *Server) renderSelector(w http.ResponseWriter, state OAuthState, ids []s
 	if s.config.Email != nil && s.config.Email.Turnstile != nil {
 		site = s.config.Email.Turnstile.SiteKey
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.templates.RenderPage(w, "selector", templates.SelectorData{Title: "Sign in", State: token, SiteKey: site, Connectors: items}); err != nil {
-		s.logger.Error("render selector", "error", err)
-	}
+	s.renderBrowserPage(w, http.StatusOK, "selector", templates.SelectorData{Title: "Sign in", State: token, SiteKey: site, Connectors: items}, failureSelectorRender)
 }
 
 // connectorIDs returns connector IDs in configured display order.
@@ -60,11 +57,11 @@ func (s *Server) HandleSelect(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("connector")
 	state, err := s.authCodeMgr.DecodeState(r.URL.Query().Get("state"))
 	if err != nil {
-		http.Error(w, "invalid state", 400)
+		s.renderBrowserError(w, http.StatusBadRequest, failureSelectorState)
 		return
 	}
 	if state.ConnectorID != "" {
-		http.Error(w, "invalid selection state", 400)
+		s.renderBrowserError(w, http.StatusBadRequest, failureSelectorStateAlreadyBound)
 		return
 	}
 	s.selectConnector(w, r, id, *state)
@@ -74,22 +71,22 @@ func (s *Server) HandleSelect(w http.ResponseWriter, r *http.Request) {
 func (s *Server) selectConnector(w http.ResponseWriter, r *http.Request, id string, state OAuthState) {
 	cfg, ok := s.config.UserLoginConnectors[id]
 	if !ok {
-		http.Error(w, "unknown connector", 400)
+		s.renderBrowserError(w, http.StatusBadRequest, failureConnectorUnknown)
 		return
 	}
 	if cfg.Type == "email" {
-		http.Error(w, "email connector must be submitted from the sign-in page", 400)
+		s.renderBrowserError(w, http.StatusBadRequest, failureEmailConnectorSelection)
 		return
 	}
 	state.ConnectorID = id
 	token, err := s.authCodeMgr.EncodeState(state)
 	if err != nil {
-		http.Error(w, "internal error", 500)
+		s.renderBrowserError(w, http.StatusInternalServerError, failureConnectorStateEncode)
 		return
 	}
 	connector, ok := s.connectors[id]
 	if !ok {
-		http.Error(w, "connector unavailable", 500)
+		s.renderBrowserError(w, http.StatusServiceUnavailable, failureConnectorUnavailable)
 		return
 	}
 	var options []oauth2.AuthCodeOption

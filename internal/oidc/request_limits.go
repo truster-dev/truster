@@ -27,20 +27,20 @@ func (s *Server) SecurityHeaders(next http.Handler) http.Handler {
 }
 
 // parseBrowserForm bounds and validates a URL-encoded browser form and rejects duplicate named fields.
-func parseBrowserForm(w http.ResponseWriter, r *http.Request, fields ...string) bool {
+func (s *Server) parseBrowserForm(w http.ResponseWriter, r *http.Request, fields ...string) bool {
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/x-www-form-urlencoded" {
-		http.Error(w, "invalid request", http.StatusBadRequest)
+		s.renderBrowserError(w, http.StatusBadRequest, failureInvalidFormContentType)
 		return false
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxBrowserFormBytes)
 	if err = r.ParseForm(); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
+		s.renderBrowserError(w, http.StatusBadRequest, failureInvalidFormBody)
 		return false
 	}
 	for _, field := range fields {
 		if len(r.PostForm[field]) > 1 {
-			http.Error(w, "invalid request", http.StatusBadRequest)
+			s.renderBrowserError(w, http.StatusBadRequest, failureDuplicateFormField)
 			return false
 		}
 	}

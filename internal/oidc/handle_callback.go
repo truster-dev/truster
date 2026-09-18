@@ -19,51 +19,50 @@ import (
 
 // HandleCallback handles an OAuth callback and selects or accepts an upstream email.
 func (s *Server) HandleCallback(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("error") != "" {
-		http.Error(w, "upstream authorization failed", 400)
-		return
-	}
 	stateToken := r.URL.Query().Get("state")
 	state, err := s.authCodeMgr.PeekState(stateToken)
 	if err != nil {
-		http.Error(w, "invalid state", 400)
+		s.renderBrowserError(w, http.StatusBadRequest, failureCallbackState)
+		return
+	}
+	if r.URL.Query().Get("error") != "" {
+		s.redirectAuthorizationError(w, r, state.RedirectURI, state.OIDCState, oauthAuthorizationErrorAccessDenied, failureCallbackUpstreamDenied)
 		return
 	}
 	id := strings.TrimPrefix(r.URL.Path, "/callback/")
 	if id == "" || id != state.ConnectorID {
-		http.Error(w, "connector does not match state", 400)
+		s.redirectAuthorizationError(w, r, state.RedirectURI, state.OIDCState, oauthAuthorizationErrorInvalidRequest, failureCallbackConnectorMismatch)
 		return
 	}
 	connector, ok := s.connectors[id]
 	if !ok {
-		http.Error(w, "unknown connector", 400)
+		s.redirectAuthorizationError(w, r, state.RedirectURI, state.OIDCState, oauthAuthorizationErrorServer, failureCallbackConnectorUnavailable)
 		return
 	}
 	token, err := connector.Exchange(r.Context(), r.URL.Query().Get("code"))
 	if err != nil {
-		s.logger.Error("authorization exchange failed", "connector_id", id, "error", err)
-		http.Error(w, "authorization exchange failed", http.StatusBadGateway)
+		s.redirectAuthorizationError(w, r, state.RedirectURI, state.OIDCState, oauthAuthorizationErrorServer, failureCallbackExchange, "client_id", state.ClientID, "connector_id", id)
 		return
 	}
 	if state.RefreshMode != "" {
 		credential, marshalErr := json.Marshal(token)
 		if marshalErr != nil || len(s.encryptionKey) != 32 {
-			http.Error(w, "credential persistence unavailable", http.StatusInternalServerError)
+			s.redirectAuthorizationError(w, r, state.RedirectURI, state.OIDCState, oauthAuthorizationErrorServer, failureCallbackCredentialEncode)
 			return
 		}
 		nonce, ciphertext, encryptErr := statedb.EncryptTemporaryCredential(s.encryptionKey, stateToken, state.ClientID, id, credential)
 		if encryptErr != nil || s.store.SaveFlowCredential("", stateToken, state.ClientID, id, nonce, ciphertext, time.Now().Add(10*time.Minute)) != nil {
-			http.Error(w, "credential persistence unavailable", http.StatusInternalServerError)
+			s.redirectAuthorizationError(w, r, state.RedirectURI, state.OIDCState, oauthAuthorizationErrorServer, failureCallbackCredentialSave)
 			return
 		}
 	}
 	identity, err := connector.GetIdentity(r.Context(), token.OAuthToken())
 	if err != nil {
-		http.Error(w, "identity lookup failed", http.StatusBadGateway)
+		s.redirectAuthorizationError(w, r, state.RedirectURI, state.OIDCState, oauthAuthorizationErrorServer, failureCallbackIdentityLookup)
 		return
 	}
 	if strings.TrimSpace(identity.Subject) == "" || len(identity.Emails) == 0 {
-		http.Error(w, "invalid upstream identity", http.StatusBadGateway)
+		s.redirectAuthorizationError(w, r, state.RedirectURI, state.OIDCState, oauthAuthorizationErrorServer, failureCallbackIdentity)
 		return
 	}
 	if len(identity.Emails) > 1 {
@@ -72,7 +71,7 @@ func (s *Server) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	state, err = s.authCodeMgr.DecodeState(stateToken)
 	if err != nil {
-		http.Error(w, "invalid state", http.StatusBadRequest)
+		s.renderBrowserError(w, http.StatusBadRequest, failureCallbackStateConsumption)
 		return
 	}
 	s.acceptOrChallenge(w, r, *state, id, identity.Subject, identity.Emails[0])
@@ -81,17 +80,17 @@ func (s *Server) HandleCallback(w http.ResponseWriter, r *http.Request) {
 // acceptOrChallenge accepts a verified identity or starts local email verification.
 func (s *Server) acceptOrChallenge(w http.ResponseWriter, r *http.Request, state OAuthState, id, subject string, emailAssertion upstream.Email) {
 	if strings.TrimSpace(subject) == "" {
-		http.Error(w, "invalid upstream identity", http.StatusBadGateway)
+		s.redirectAuthorizationError(w, r, state.RedirectURI, state.OIDCState, oauthAuthorizationErrorServer, failureCallbackIdentity)
 		return
 	}
 	email, err := normalizeEmail(emailAssertion.Address)
 	if err != nil {
-		http.Error(w, "invalid upstream identity", http.StatusBadGateway)
+		s.redirectAuthorizationError(w, r, state.RedirectURI, state.OIDCState, oauthAuthorizationErrorServer, failureCallbackEmail)
 		return
 	}
 	exists, local, err := s.store.CredentialVerified(id, subject, email)
 	if err != nil {
-		http.Error(w, "internal error", 500)
+		s.redirectAuthorizationError(w, r, state.RedirectURI, state.OIDCState, oauthAuthorizationErrorServer, failureCallbackCredentialLookup)
 		return
 	}
 	mode := "disabled"
@@ -102,7 +101,7 @@ func (s *Server) acceptOrChallenge(w http.ResponseWriter, r *http.Request, state
 	if accepted {
 		if !exists || emailAssertion.Verified {
 			if err = s.store.SaveCredential(id, subject, email, local, time.Now()); err != nil {
-				http.Error(w, "internal error", http.StatusInternalServerError)
+				s.redirectAuthorizationError(w, r, state.RedirectURI, state.OIDCState, oauthAuthorizationErrorServer, failureCallbackCredentialSave)
 				return
 			}
 		}
@@ -110,7 +109,7 @@ func (s *Server) acceptOrChallenge(w http.ResponseWriter, r *http.Request, state
 		return
 	}
 	if s.config.Email == nil || s.mailer == nil {
-		http.Error(w, "email verification unavailable", http.StatusForbidden)
+		s.redirectAuthorizationError(w, r, state.RedirectURI, state.OIDCState, oauthAuthorizationErrorAccessDenied, failureCallbackEmailVerificationUnavailable)
 		return
 	}
 	s.beginOTP(w, r, state, id, subject, email)
@@ -130,26 +129,26 @@ func (s *Server) complete(w http.ResponseWriter, r *http.Request, state OAuthSta
 	resolved, err := s.policyResolver.ResolveClient(r.Context(), state.ClientID, true)
 	if err != nil {
 		if errors.Is(err, authpolicy.ErrDenied) {
-			s.renderErrorPage(w, http.StatusForbidden, "Login Failed", "Your account was not allowed.")
+			s.renderErrorPage(w, http.StatusForbidden, failureClientPolicyDenied, "Login failed", "Your account was not allowed.")
 		} else {
-			http.Error(w, "auth temporarily unavailable", http.StatusServiceUnavailable)
+			s.renderErrorPage(w, http.StatusServiceUnavailable, failureClientPolicyUnavailable, "Sign-in unavailable", "We couldn't complete sign-in right now. Return and try again shortly.")
 		}
 		return
 	}
 	if !s.isValidRedirectURI(state.RedirectURI, resolved.Config) {
-		http.Error(w, "authorization profile changed", http.StatusBadRequest)
+		s.renderBrowserError(w, http.StatusBadRequest, failureAuthorizationProfileChanged)
 		return
 	}
 	if !stateSatisfiesClientPolicy(&state, resolved.Config) || state.RefreshMode == "offline" && !state.OfflineConsent {
-		redirectAuthorizationError(w, r, state.RedirectURI, state.OIDCState, "invalid_request")
+		s.redirectAuthorizationError(w, r, state.RedirectURI, state.OIDCState, oauthAuthorizationErrorInvalidRequest, failureAuthorizationPolicyChanged)
 		return
 	}
 	_, policyErr := s.policyResolver.ResolveUser(r.Context(), resolved, strings.ToLower(email))
 	if policyErr != nil {
 		if errors.Is(policyErr, authpolicy.ErrDenied) {
-			s.renderErrorPage(w, http.StatusForbidden, "Login Failed", "Your account was not allowed.")
+			s.renderErrorPage(w, http.StatusForbidden, failureUserPolicyDenied, "Login failed", "Your account was not allowed.")
 		} else {
-			http.Error(w, "auth temporarily unavailable", http.StatusServiceUnavailable)
+			s.renderErrorPage(w, http.StatusServiceUnavailable, failureUserPolicyUnavailable, "Sign-in unavailable", "We couldn't complete sign-in right now. Return and try again shortly.")
 		}
 		return
 	}
@@ -163,23 +162,23 @@ func (s *Server) complete(w http.ResponseWriter, r *http.Request, state OAuthSta
 			credential, loadErr = statedb.DecryptTemporaryCredential(s.encryptionKey, state.FlowID, state.ClientID, state.ConnectorID, nonce, ciphertext)
 		}
 		if loadErr != nil && !errors.Is(loadErr, statedb.ErrInvalidGrant) {
-			http.Error(w, "internal error", 500)
+			s.redirectAuthorizationError(w, r, state.RedirectURI, state.OIDCState, oauthAuthorizationErrorServer, failureAuthorizationCredentialLoad)
 			return
 		}
 	}
 	if state.RefreshMode != "" && (!connectorConfigured || credentialBacked == (connectorConfig.Type == "email")) {
-		http.Error(w, "authorization flow is invalid", http.StatusBadRequest)
+		s.redirectAuthorizationError(w, r, state.RedirectURI, state.OIDCState, oauthAuthorizationErrorInvalidRequest, failureAuthorizationFlow)
 		return
 	}
 	code, err := s.authCodeMgr.GenerateCode(AuthCodePayload{ClientID: state.ClientID, RedirectURI: state.RedirectURI, CodeChallenge: state.CodeChallenge, Email: email, EmailVerified: emailVerified, Nonce: state.Nonce, Scopes: state.Scopes, RefreshMode: state.RefreshMode, AuthTime: state.AuthTime, ConnectorID: state.ConnectorID, UpstreamSubject: subject, OfflineConsent: state.OfflineConsent, DPoPJKT: state.DPoPJKT, PushedAuthorization: state.PushedAuthorization})
 	if err != nil {
-		http.Error(w, "internal error", 500)
+		s.redirectAuthorizationError(w, r, state.RedirectURI, state.OIDCState, oauthAuthorizationErrorServer, failureAuthorizationCodeCreate)
 		return
 	}
 	if credentialBacked {
 		nonce, ciphertext, saveErr := statedb.EncryptTemporaryCredential(s.encryptionKey, code, state.ClientID, state.ConnectorID, credential)
 		if saveErr != nil || s.store.SaveFlowCredential(state.FlowID, code, state.ClientID, state.ConnectorID, nonce, ciphertext, time.Now().UTC().Add(5*time.Minute)) != nil {
-			http.Error(w, "internal error", 500)
+			s.redirectAuthorizationError(w, r, state.RedirectURI, state.OIDCState, oauthAuthorizationErrorServer, failureAuthorizationCredentialSave)
 			return
 		}
 	}

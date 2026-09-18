@@ -40,10 +40,10 @@ type policyResolver interface {
 
 // Result contains verified provenance and the exactly matched binding.
 type Result struct {
-	Issuer, UpstreamSubject string
-	Claims                  map[string]any
-	Binding                 *config.EffectiveTrustBinding
-	Diagnostics             []Diagnostic
+	IssuerID, Issuer, UpstreamSubject string
+	Claims                            map[string]any
+	Binding                           *config.EffectiveTrustBinding
+	Diagnostics                       []Diagnostic
 }
 
 // Diagnostic records a bounded, token-free binding evaluation result.
@@ -152,7 +152,7 @@ func (s *Service) VerifyAndEvaluate(ctx context.Context, raw, clientID string) (
 	if err = boundClaims(claims, 0); err != nil {
 		return nil, err
 	}
-	result := &Result{Issuer: issuerURL, UpstreamSubject: verified.Subject(), Claims: claims}
+	result := &Result{IssuerID: issuerName, Issuer: issuerURL, UpstreamSubject: verified.Subject(), Claims: claims}
 	bindings, resolveErr := s.policyResolver.ResolveTrust(ctx, resolved, issuerName)
 	if resolveErr != nil {
 		return result, resolveErr

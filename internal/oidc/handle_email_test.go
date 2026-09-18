@@ -5,6 +5,7 @@
 package oidc
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -74,6 +75,49 @@ func TestBeginOTPDoesNotExposeSMTPFailure(t *testing.T) {
 	}
 	if statuses[0] != statuses[1] {
 		t.Fatalf("SMTP outcomes returned different statuses: %v", statuses)
+	}
+}
+
+// TestHandleEmailVerifyRendersRetryableInvalidCode verifies a wrong code preserves the active flow without logging private values.
+func TestHandleEmailVerifyRendersRetryableInvalidCode(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	store, err := statedb.NewSQLite(t.TempDir()+"/test.db", logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	manager, err := templates.Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := []byte("01234567890123456789012345678901")
+	now := time.Now()
+	flow := statedb.OTPFlow{Email: "user@example.com"}
+	if _, err = store.CreateOTP("private-challenge", flow.Email, "11111111", flow, secret, now, 5*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{config: &config.Config{Email: &config.EmailConfig{OTPTTL: config.Duration(5 * time.Minute)}}, store: store, templates: manager, mailer: fakeMailer{}, otpSecret: secret, logger: logger}
+	request := httptest.NewRequest(http.MethodPost, "/email/verify", strings.NewReader("challenge=private-challenge&code=22222222"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+	server.HandleEmailVerify(response, request)
+
+	body := response.Body.String()
+	if response.Code != http.StatusBadRequest || !strings.Contains(body, "That code isn&#39;t valid") || !strings.Contains(body, `value="private-challenge"`) || strings.Contains(body, "22222222") {
+		t.Fatalf("response = %d %q", response.Code, body)
+	}
+	if _, err = store.ConsumeOTP("private-challenge", "11111111", secret, now.Add(time.Second)); err != nil {
+		t.Fatalf("correct retry failed: %v", err)
+	}
+	output := logs.String()
+	if !strings.Contains(output, `"reason":"otp_code_rejected"`) || !strings.Contains(output, `"status":400`) {
+		t.Fatalf("safe rejection log missing: %s", output)
+	}
+	for _, private := range []string{"user@example.com", "private-challenge", "11111111", "22222222"} {
+		if strings.Contains(output, private) {
+			t.Errorf("log leaked %q: %s", private, output)
+		}
 	}
 }
 
