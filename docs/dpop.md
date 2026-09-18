@@ -110,6 +110,12 @@ enabled, Truster rejects login requests that skip `/par`. After consuming the pu
 request, Truster redirects the browser to an opaque continuation URL so refreshing a
 sign-in or consent page does not attempt to reuse the `request_uri`.
 
+The continuation URL contains live authorization state. Reverse proxies, ingress
+controllers, access loggers, and APM agents must redact the `state` query parameter.
+If response headers are recorded, they must also redact `state` from `Location`. The
+supplied Caddy configurations redact request state and omit logged `Location` response
+headers by default; this filtering does not alter the HTTP redirect sent to the browser.
+
 ## Exchange, refresh, and revoke
 
 When exchanging the code or using a refresh token, send a new proof whose `htu` is the

@@ -11,10 +11,13 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/truster-dev/truster/v2/internal/challenge"
 	"github.com/truster-dev/truster/v2/internal/config"
+	"github.com/truster-dev/truster/v2/internal/statedb"
 )
 
 // followPushedContinuation follows the refresh-safe redirect after a pushed request is consumed.
@@ -58,6 +61,10 @@ func TestPushedAuthorizeReplacesConsumedState(t *testing.T) {
 		t.Fatalf("selector state not found: %s", selector.Body.String())
 	}
 	original := match[1]
+	continuation, err := url.Parse(authorizeResponse.Header().Get("Location"))
+	if err != nil || continuation.Query().Get("state") != original {
+		t.Fatalf("selector state differs from continuation: %q", authorizeResponse.Header().Get("Location"))
+	}
 	peeked, err := server.authCodeMgr.PeekState(original)
 	if err != nil || peeked.FlowID != original || peeked.ConnectorID != "" {
 		t.Fatalf("original PAR state peek=%#v err=%v", peeked, err)
@@ -68,6 +75,16 @@ func TestPushedAuthorizeReplacesConsumedState(t *testing.T) {
 	server.HandleSelect(selected, selectRequest)
 	if _, err = server.authCodeMgr.PeekState(original); err == nil {
 		t.Fatal("original PAR state remained after connector selection")
+	}
+	replayedSelection := httptest.NewRecorder()
+	server.HandleSelect(replayedSelection, selectRequest)
+	if replayedSelection.Code != http.StatusBadRequest {
+		t.Fatalf("replayed selection status = %d", replayedSelection.Code)
+	}
+	stale := httptest.NewRecorder()
+	server.HandleAuthorizeContinue(stale, httptest.NewRequest(http.MethodGet, authorizeResponse.Header().Get("Location"), nil))
+	if stale.Code != http.StatusBadRequest {
+		t.Fatalf("consumed continuation status = %d", stale.Code)
 	}
 	redirect, err := url.Parse(selected.Header().Get("Location"))
 	if err != nil {
@@ -146,6 +163,226 @@ func TestHandlePARStoresOneTimeRequest(t *testing.T) {
 	server.HandleAuthorize(second, front)
 	if second.Code != http.StatusBadRequest {
 		t.Fatalf("second consume status = %d", second.Code)
+	}
+}
+
+// TestPushedContinuationPreservesSecurityBindings verifies refresh only peeks at unchanged state.
+func TestPushedContinuationPreservesSecurityBindings(t *testing.T) {
+	server, _ := authorizeServer(t, map[string]config.ConnectorConfig{"email": {Type: "email", DisplayName: "Email"}})
+	authTime := time.Now().UTC().Truncate(time.Second)
+	want := OAuthState{
+		ClientID: "client", RedirectURI: "https://client.example/callback", CodeChallenge: "challenge",
+		Nonce: "nonce", OIDCState: "downstream-state", Scopes: "email openid", RefreshMode: "session",
+		AuthTime: authTime, Purpose: "authorize_create", DPoPJKT: "thumbprint", PushedAuthorization: true,
+	}
+	token, err := server.authCodeMgr.EncodeState(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storedBefore, err := server.store.PeekState(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	location := "/authorize/continue?" + url.Values{"state": {token}}.Encode()
+	for range 2 {
+		response := httptest.NewRecorder()
+		server.HandleAuthorizeContinue(response, httptest.NewRequest(http.MethodGet, location, nil))
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `name="state" value="`+token+`"`) {
+			t.Fatalf("continuation response = %d %s", response.Code, response.Body.String())
+		}
+	}
+	got, err := server.authCodeMgr.PeekState(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storedAfter, err := server.store.PeekState(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !storedAfter.CreatedAt.Equal(storedBefore.CreatedAt) || !storedAfter.ExpiresAt.Equal(storedBefore.ExpiresAt) {
+		t.Fatalf("continuation changed state lifetime: before=%v–%v after=%v–%v", storedBefore.CreatedAt, storedBefore.ExpiresAt, storedAfter.CreatedAt, storedAfter.ExpiresAt)
+	}
+	if got.FlowID != token || got.ClientID != want.ClientID || got.RedirectURI != want.RedirectURI || got.CodeChallenge != want.CodeChallenge || got.Nonce != want.Nonce || got.OIDCState != want.OIDCState || got.Scopes != want.Scopes || got.RefreshMode != want.RefreshMode || !got.AuthTime.Equal(want.AuthTime) || got.OfflineConsent != want.OfflineConsent || got.Purpose != want.Purpose || got.DPoPJKT != want.DPoPJKT || !got.PushedAuthorization {
+		t.Fatalf("continuation changed security bindings: %#v", got)
+	}
+}
+
+// TestPushedContinuationRejectsInvalidTransitions verifies only active unbound PAR state can resume.
+func TestPushedContinuationRejectsInvalidTransitions(t *testing.T) {
+	server, _ := authorizeServer(t, map[string]config.ConnectorConfig{"email": {Type: "email", DisplayName: "Email"}})
+	nonPAR, err := server.authCodeMgr.EncodeState(OAuthState{ClientID: "client"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound, err := server.authCodeMgr.EncodeState(OAuthState{ClientID: "client", ConnectorID: "email", PushedAuthorization: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumed, err := server.authCodeMgr.EncodeState(OAuthState{ClientID: "client", PushedAuthorization: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = server.authCodeMgr.DecodeState(consumed); err != nil {
+		t.Fatal(err)
+	}
+	expired, err := statedb.GenerateStateToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err = server.store.SaveState(&statedb.OAuthState{StateToken: expired, ClientID: "client", CreatedAt: now.Add(-time.Hour), ExpiresAt: now.Add(-time.Minute), PushedAuthorization: true}); err != nil {
+		t.Fatal(err)
+	}
+	valid, err := server.authCodeMgr.EncodeState(OAuthState{ClientID: "client", PushedAuthorization: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rawQuery := range []string{"", "state=", "state=" + valid + "&state=" + valid, "state=" + valid + "&extra=two", "state=" + nonPAR, "state=" + bound, "state=" + consumed, "state=" + expired} {
+		response := httptest.NewRecorder()
+		server.HandleAuthorizeContinue(response, httptest.NewRequest(http.MethodGet, "/authorize/continue?"+rawQuery, nil))
+		if response.Code != http.StatusBadRequest {
+			t.Errorf("query %q status = %d", rawQuery, response.Code)
+		}
+	}
+	if _, err = server.authCodeMgr.PeekState(valid); err != nil {
+		t.Fatalf("invalid query consumed valid state: %v", err)
+	}
+}
+
+// TestPushedContinuationActionsAreSingleUse verifies email and consent consume continuation state.
+func TestPushedContinuationActionsAreSingleUse(t *testing.T) {
+	server, _ := authorizeServer(t, map[string]config.ConnectorConfig{"email": {Type: "email", DisplayName: "Email"}})
+	server.challenge = challenge.Noop{}
+	server.mailer = fakeMailer{}
+	server.otpSecret = []byte("01234567890123456789012345678901")
+	server.config.Email = &config.EmailConfig{OTPTTL: config.Duration(5 * time.Minute)}
+
+	emailState, err := server.authCodeMgr.EncodeState(OAuthState{ClientID: "client", Scopes: "openid", PushedAuthorization: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	emailLocation := "/authorize/continue?state=" + emailState
+	for range 2 {
+		preview := httptest.NewRecorder()
+		server.HandleAuthorizeContinue(preview, httptest.NewRequest(http.MethodGet, emailLocation, nil))
+		if preview.Code != http.StatusOK || !strings.Contains(preview.Body.String(), `name="state" value="`+emailState+`"`) {
+			t.Fatalf("email continuation = %d %s", preview.Code, preview.Body.String())
+		}
+	}
+	emailForm := url.Values{"state": {emailState}, "connector": {"email"}, "email": {"user@example.com"}}
+	for attempt, wantStatus := range []int{http.StatusOK, http.StatusBadRequest} {
+		request := httptest.NewRequest(http.MethodPost, "/email/start", strings.NewReader(emailForm.Encode()))
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		response := httptest.NewRecorder()
+		server.HandleEmailStart(response, request)
+		if response.Code != wantStatus {
+			t.Fatalf("email attempt %d status = %d", attempt+1, response.Code)
+		}
+	}
+	staleEmail := httptest.NewRecorder()
+	server.HandleAuthorizeContinue(staleEmail, httptest.NewRequest(http.MethodGet, "/authorize/continue?state="+emailState, nil))
+	if staleEmail.Code != http.StatusBadRequest {
+		t.Fatalf("consumed email continuation status = %d", staleEmail.Code)
+	}
+
+	for _, decision := range []string{"accept", "deny"} {
+		t.Run(decision, func(t *testing.T) {
+			original := OAuthState{ClientID: "client", RedirectURI: "https://client.example/callback", CodeChallenge: "challenge", Nonce: "nonce", OIDCState: "downstream-state", Scopes: "offline_access openid", RefreshMode: "offline", DPoPJKT: "thumbprint", PushedAuthorization: true}
+			token, encodeErr := server.authCodeMgr.EncodeState(original)
+			if encodeErr != nil {
+				t.Fatal(encodeErr)
+			}
+			var previewBody string
+			for range 2 {
+				preview := httptest.NewRecorder()
+				server.HandleAuthorizeContinue(preview, httptest.NewRequest(http.MethodGet, "/authorize/continue?state="+token, nil))
+				if preview.Code != http.StatusOK || !strings.Contains(preview.Body.String(), `name="state" value="`+token+`"`) {
+					t.Fatalf("consent continuation = %d %s", preview.Code, preview.Body.String())
+				}
+				if previewBody != "" && preview.Body.String() != previewBody {
+					t.Fatal("consent refresh changed the rendered action")
+				}
+				previewBody = preview.Body.String()
+			}
+			previewed, peekErr := server.authCodeMgr.PeekState(token)
+			if peekErr != nil || previewed.OfflineConsent {
+				t.Fatalf("preview changed consent: state=%#v error=%v", previewed, peekErr)
+			}
+			form := url.Values{"state": {token}, "decision": {decision}}
+			firstStatus := http.StatusOK
+			if decision == "deny" {
+				firstStatus = http.StatusFound
+			}
+			request := httptest.NewRequest(http.MethodPost, "/consent", strings.NewReader(form.Encode()))
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			first := httptest.NewRecorder()
+			server.HandleConsent(first, request)
+			if first.Code != firstStatus {
+				t.Fatalf("consent status = %d", first.Code)
+			}
+			if decision == "accept" {
+				match := regexp.MustCompile(`name="state" value="([^"]+)"`).FindStringSubmatch(first.Body.String())
+				if len(match) != 2 || match[1] == token {
+					t.Fatalf("accepted consent replacement missing: %s", first.Body.String())
+				}
+				replacement, replacementErr := server.authCodeMgr.PeekState(match[1])
+				if replacementErr != nil || !replacement.OfflineConsent || replacement.ClientID != original.ClientID || replacement.RedirectURI != original.RedirectURI || replacement.CodeChallenge != original.CodeChallenge || replacement.Nonce != original.Nonce || replacement.OIDCState != original.OIDCState || replacement.Scopes != original.Scopes || replacement.RefreshMode != original.RefreshMode || replacement.DPoPJKT != original.DPoPJKT || !replacement.PushedAuthorization {
+					t.Fatalf("accepted consent state=%#v error=%v", replacement, replacementErr)
+				}
+			} else {
+				location, parseErr := url.Parse(first.Header().Get("Location"))
+				if parseErr != nil || location.Query().Get("error") != "access_denied" || location.Query().Get("state") != original.OIDCState {
+					t.Fatalf("denied consent redirect=%q error=%v", first.Header().Get("Location"), parseErr)
+				}
+			}
+			replayRequest := httptest.NewRequest(http.MethodPost, "/consent", strings.NewReader(form.Encode()))
+			replayRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			replay := httptest.NewRecorder()
+			server.HandleConsent(replay, replayRequest)
+			if replay.Code != http.StatusBadRequest {
+				t.Fatalf("replayed consent status = %d", replay.Code)
+			}
+			stale := httptest.NewRecorder()
+			server.HandleAuthorizeContinue(stale, httptest.NewRequest(http.MethodGet, "/authorize/continue?state="+token, nil))
+			if stale.Code != http.StatusBadRequest {
+				t.Fatalf("consumed consent continuation status = %d", stale.Code)
+			}
+		})
+	}
+}
+
+// TestPushedContinuationAutomaticallySelectsProviderOnce verifies concurrent resumes have one winner.
+func TestPushedContinuationAutomaticallySelectsProviderOnce(t *testing.T) {
+	server, _ := authorizeServer(t, map[string]config.ConnectorConfig{"google": {Type: "google", DisplayName: "Google"}})
+	token, err := server.authCodeMgr.EncodeState(OAuthState{ClientID: "client", PushedAuthorization: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	location := "/authorize/continue?state=" + token
+	responses := []*httptest.ResponseRecorder{httptest.NewRecorder(), httptest.NewRecorder()}
+	start := make(chan struct{})
+	var group sync.WaitGroup
+	for _, response := range responses {
+		group.Add(1)
+		go func(response *httptest.ResponseRecorder) {
+			defer group.Done()
+			<-start
+			server.HandleAuthorizeContinue(response, httptest.NewRequest(http.MethodGet, location, nil))
+		}(response)
+	}
+	close(start)
+	group.Wait()
+	found, rejected := 0, 0
+	for _, response := range responses {
+		switch response.Code {
+		case http.StatusFound:
+			found++
+		case http.StatusBadRequest:
+			rejected++
+		}
+	}
+	if found != 1 || rejected != 1 {
+		t.Fatalf("concurrent continuation statuses = %d, %d", responses[0].Code, responses[1].Code)
 	}
 }
 

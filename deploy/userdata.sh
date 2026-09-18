@@ -27,6 +27,15 @@ ${OIDC_ADDR} {
     reverse_proxy localhost:8080
     log {
         output file /var/log/caddy/access.log
+        format filter {
+            wrap json
+            fields {
+                request>uri query {
+                    replace state REDACTED
+                }
+                resp_headers>Location delete
+            }
+        }
     }
 }
 CADDYEOF
