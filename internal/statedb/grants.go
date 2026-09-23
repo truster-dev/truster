@@ -145,7 +145,7 @@ func (s *Store) CreateIdentitySelection(token, state, connector, subject string,
 	if affected, rowsErr := result.RowsAffected(); rowsErr != nil || affected != 1 {
 		return ErrInvalidGrant
 	}
-	_, err = tx.Exec(`INSERT INTO {{state}}identity_selections(token_hash,state_token,connector_id,subject,emails_json,expires_at) VALUES($1,$2,$3,$4,$5,$6)`, h[:], state, connector, subject, data, expiry)
+	_, err = tx.Exec(`INSERT INTO {{state}}identity_selections(token_hash,state_token,connector_id,subject,emails_json,expires_at) VALUES($1,$2,$3,$4,$5,$6)`, h[:], state, connector, subject, string(data), expiry)
 	if err != nil {
 		return fmt.Errorf("create identity selection: %w", err)
 	}

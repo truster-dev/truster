@@ -196,16 +196,20 @@ func TestPostgreSQLCrossReplicaSemantics(t *testing.T) {
 	}
 }
 
-// TestPostgreSQLIdentitySelectionExtendsOAuthState verifies chooser and state lifetimes update atomically in production storage.
-func TestPostgreSQLIdentitySelectionExtendsOAuthState(t *testing.T) {
+// TestPostgreSQLIdentitySelectionRoundTrip verifies chooser data and state lifetimes across production pools.
+func TestPostgreSQLIdentitySelectionRoundTrip(t *testing.T) {
 	a, b := postgreSQLStores(t)
 	now := time.Now().UTC()
 	state := &OAuthState{StateToken: "identity-state", ClientID: "client", RedirectURI: "https://client.example", CodeChallenge: "challenge", OIDCState: "state", CreatedAt: now.Add(-9 * time.Minute), ExpiresAt: now.Add(time.Minute), Scopes: "openid", AuthTime: now.Add(-9 * time.Minute)}
 	if err := a.SaveState(state); err != nil {
 		t.Fatal(err)
 	}
+	emails := []upstream.Email{
+		{Address: "primary@example.com", Verified: true, Primary: true},
+		{Address: "other@example.com", Verified: true},
+	}
 	before := time.Now()
-	if err := a.CreateIdentitySelection("identity-selection", state.StateToken, "github", "123", []upstream.Email{{Address: "user@example.com", Verified: true}}, 10*time.Minute, 5*time.Minute); err != nil {
+	if err := a.CreateIdentitySelection("identity-selection", state.StateToken, "github", "123", emails, 10*time.Minute, 5*time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	after := time.Now()
@@ -215,6 +219,19 @@ func TestPostgreSQLIdentitySelectionExtendsOAuthState(t *testing.T) {
 	}
 	if stored.ExpiresAt.Before(before.Add(5*time.Minute)) || stored.ExpiresAt.After(after.Add(5*time.Minute)) {
 		t.Fatalf("OAuth state expiry = %v, want between %v and %v", stored.ExpiresAt, before.Add(5*time.Minute), after.Add(5*time.Minute))
+	}
+	gotState, connector, subject, gotEmails, err := b.ConsumeIdentitySelection("identity-selection", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotState != state.StateToken || connector != "github" || subject != "123" {
+		t.Fatalf("identity selection = %q %q %q, want %q github 123", gotState, connector, subject, state.StateToken)
+	}
+	if len(gotEmails) != 2 || gotEmails[0] != emails[0] || gotEmails[1] != emails[1] {
+		t.Fatalf("identity selection emails = %#v, want %#v", gotEmails, emails)
+	}
+	if _, _, _, _, err = a.ConsumeIdentitySelection("identity-selection", time.Now()); !errors.Is(err, ErrInvalidGrant) {
+		t.Fatalf("replayed identity selection error = %v, want invalid grant", err)
 	}
 }
 
