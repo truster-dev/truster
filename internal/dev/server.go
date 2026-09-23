@@ -133,12 +133,17 @@ func (s *templateServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "templates unavailable", http.StatusInternalServerError)
 		return
 	}
+	pageData := templates.PageData{
+		Request:     templates.RequestData{Method: r.Method, Host: r.Host, Path: r.URL.Path},
+		IssuerURL:   "https://auth.example.com",
+		HomepageURL: "https://app.example.com",
+	}
 	if r.Method == http.MethodPost {
 		s.handleMockPost(w, r)
 		return
 	}
 	if r.Method == http.MethodHead {
-		manager.HandlePublic(w, r)
+		manager.HandlePublic(w, r, pageData)
 		return
 	}
 	if r.Method != http.MethodGet {
@@ -153,25 +158,25 @@ func (s *templateServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		output.WriteString(`<!doctype html><html><head><meta charset="utf-8"><title>Truster template previews</title></head><body><main><h1>Truster template previews</h1><ul><li><a target="_blank" href="/pages/selector.html">Connector selector</a></li><li><a target="_blank" href="/pages/identity.html">Identity selector</a></li><li><a target="_blank" href="/pages/otp.html">OTP entry</a></li><li><a target="_blank" href="/pages/error.html">Error page</a></li><li><a target="_blank" href="/email/otp.html">HTML email</a></li><li><a target="_blank" href="/email/otp.txt">Plain-text email</a></li></ul></main></body></html>`)
 	case "/pages/selector.html":
 		err = manager.RenderPage(&output, "selector", templates.SelectorData{
-			Title: "Sign in", State: "mock-state", Connectors: []templates.ConnectorData{
+			PageData: pageData, Title: "Sign in", State: "mock-state", Connectors: []templates.ConnectorData{
 				{ID: "google", DisplayName: "Google", URL: "#google"},
 				{ID: "github", DisplayName: "GitHub", URL: "#github"},
 				{ID: "email", DisplayName: "Email", Email: true},
 			},
 		})
 	case "/pages/otp.html":
-		err = manager.RenderPage(&output, "otp", templates.OTPData{Title: "Verify email", ChallengeID: "mock-challenge", Message: "A code was sent.", Email: "user@example.com", ExpiresIn: 5 * time.Minute, ExpiresAt: time.Now().Add(5 * time.Minute)})
+		err = manager.RenderPage(&output, "otp", templates.OTPData{PageData: pageData, Title: "Verify email", ChallengeID: "mock-challenge", Message: "A code was sent.", Email: "user@example.com", ExpiresIn: 5 * time.Minute, ExpiresAt: time.Now().Add(5 * time.Minute)})
 	case "/pages/identity.html":
-		err = manager.RenderPage(&output, "identity", templates.IdentityData{Title: "Choose an email", Token: "mock-token", Emails: []templates.EmailData{{Address: "primary@example.com", Verified: true, Primary: true}, {Address: "other@example.com"}}})
+		err = manager.RenderPage(&output, "identity", templates.IdentityData{PageData: pageData, Title: "Choose an email", Token: "mock-token", Emails: []templates.EmailData{{Address: "primary@example.com", Verified: true, Primary: true}, {Address: "other@example.com"}}})
 	case "/pages/error.html":
-		err = manager.RenderPage(&output, "error", templates.ErrorData{Title: "Login failed", Message: "This is a mock error message."})
+		err = manager.RenderPage(&output, "error", templates.ErrorData{PageData: pageData, Title: "Login failed", Message: "This is a mock error message."})
 	case "/email/otp.html":
 		err = manager.RenderEmail(&output, "html", templates.OTPEmailData{Code: "12345678", ExpiresAt: time.Now().UTC().Add(5 * time.Minute), ExpiresIn: 5 * time.Minute})
 	case "/email/otp.txt":
 		contentType = "text/plain; charset=utf-8"
 		err = manager.RenderEmail(&output, "text", templates.OTPEmailData{Code: "12345678", ExpiresAt: time.Now().UTC().Add(5 * time.Minute), ExpiresIn: 5 * time.Minute})
 	default:
-		manager.HandlePublic(w, r)
+		manager.HandlePublic(w, r, pageData)
 		return
 	}
 	if err != nil {

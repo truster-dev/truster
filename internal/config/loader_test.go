@@ -113,6 +113,44 @@ func TestValidateIssuerURL(t *testing.T) {
 	}
 }
 
+// TestValidateHomepageURL verifies the optional root redirect uses public web URLs only.
+func TestValidateHomepageURL(t *testing.T) {
+	base := Config{
+		IssuerURL:        "https://auth.example.com",
+		HTTPListenAddr:   "127.0.0.1:8080",
+		SigningAlgorithm: DefaultSigningAlgorithm,
+		JWKSKID:          "key-1",
+		Secrets:          SecretsConfig{Provider: "env", SigningKeyName: "SIGNING_KEY"},
+		UserLoginConnectors: map[string]ConnectorConfig{
+			"google": {Type: "google", DisplayName: "Google", CredentialsSecret: "GOOGLE_CREDS"},
+		},
+		StaticPolicy: StaticPolicyConfig{
+			DefaultRedirectURIs: []string{"http://localhost:8000"},
+			Clients:             map[string]ClientConfig{"test-client": {}},
+		},
+	}
+	for _, test := range []struct {
+		name, homepage string
+		valid          bool
+	}{
+		{name: "absent", valid: true},
+		{name: "HTTPS", homepage: "https://app.example.com/sign-in", valid: true},
+		{name: "localhost HTTP", homepage: "http://localhost:3000", valid: true},
+		{name: "external HTTP", homepage: "http://app.example.com", valid: false},
+		{name: "missing host", homepage: "https:///sign-in", valid: false},
+		{name: "userinfo", homepage: "https://user@app.example.com", valid: false},
+		{name: "unsupported scheme", homepage: "javascript:alert(1)", valid: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := base
+			cfg.HomepageURL = test.homepage
+			if err := validate(&cfg); (err == nil) != test.valid {
+				t.Fatalf("validate() error = %v, valid = %v", err, test.valid)
+			}
+		})
+	}
+}
+
 func TestValidateRedirectURI(t *testing.T) {
 	tests := []struct {
 		name        string

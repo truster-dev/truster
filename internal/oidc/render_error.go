@@ -132,7 +132,7 @@ func (s *Server) logBrowserFailure(status int, reason browserFailureReason, attr
 }
 
 // renderBrowserError renders consistent user-facing copy for a browser failure.
-func (s *Server) renderBrowserError(w http.ResponseWriter, status int, reason browserFailureReason) {
+func (s *Server) renderBrowserError(w http.ResponseWriter, r *http.Request, status int, reason browserFailureReason) {
 	title := "Unable to continue"
 	message := "This request is invalid or has expired. Return to the application and try again."
 	switch status {
@@ -153,18 +153,18 @@ func (s *Server) renderBrowserError(w http.ResponseWriter, status int, reason br
 			message = "We couldn't complete sign-in. Return to the application and try again shortly."
 		}
 	}
-	s.renderErrorPage(w, status, reason, title, message)
+	s.renderErrorPage(w, r, status, reason, title, message)
 }
 
 // renderErrorPage renders a browser error with the configured error template.
-func (s *Server) renderErrorPage(w http.ResponseWriter, status int, reason browserFailureReason, title, message string) {
+func (s *Server) renderErrorPage(w http.ResponseWriter, r *http.Request, status int, reason browserFailureReason, title, message string) {
 	s.logBrowserFailure(status, reason)
 	if s.templates == nil {
 		http.Error(w, message, status)
 		return
 	}
 	var body bytes.Buffer
-	if err := s.templates.RenderPage(&body, "error", templates.ErrorData{Title: title, Message: message}); err != nil {
+	if err := s.templates.RenderPage(&body, "error", templates.ErrorData{PageData: s.pageData(r), Title: title, Message: message}); err != nil {
 		if s.logger != nil {
 			s.logger.Error("render error page", "reason", reason)
 		}

@@ -22,7 +22,7 @@ func (s *Server) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	stateToken := r.URL.Query().Get("state")
 	state, err := s.authCodeMgr.PeekState(stateToken)
 	if err != nil {
-		s.renderBrowserError(w, http.StatusBadRequest, failureCallbackState)
+		s.renderBrowserError(w, r, http.StatusBadRequest, failureCallbackState)
 		return
 	}
 	if r.URL.Query().Get("error") != "" {
@@ -66,12 +66,12 @@ func (s *Server) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(identity.Emails) > 1 {
-		s.renderIdentitySelection(w, stateToken, id, identity)
+		s.renderIdentitySelection(w, r, stateToken, id, identity)
 		return
 	}
 	state, err = s.authCodeMgr.DecodeState(stateToken)
 	if err != nil {
-		s.renderBrowserError(w, http.StatusBadRequest, failureCallbackStateConsumption)
+		s.renderBrowserError(w, r, http.StatusBadRequest, failureCallbackStateConsumption)
 		return
 	}
 	s.acceptOrChallenge(w, r, *state, id, identity.Subject, identity.Emails[0])
@@ -123,20 +123,20 @@ func verificationAccepted(mode string, providerVerified, localVerified bool) boo
 // complete issues an authorization code and redirects to the client.
 func (s *Server) complete(w http.ResponseWriter, r *http.Request, state OAuthState, subject, email string, emailVerified bool) {
 	if state.Purpose == "manage_grants" {
-		s.renderGrants(w, email)
+		s.renderGrants(w, r, email)
 		return
 	}
 	resolved, err := s.policyResolver.ResolveClient(r.Context(), state.ClientID, true)
 	if err != nil {
 		if errors.Is(err, authpolicy.ErrDenied) {
-			s.renderErrorPage(w, http.StatusForbidden, failureClientPolicyDenied, "Login failed", "Your account was not allowed.")
+			s.renderErrorPage(w, r, http.StatusForbidden, failureClientPolicyDenied, "Login failed", "Your account was not allowed.")
 		} else {
-			s.renderErrorPage(w, http.StatusServiceUnavailable, failureClientPolicyUnavailable, "Sign-in unavailable", "We couldn't complete sign-in right now. Return and try again shortly.")
+			s.renderErrorPage(w, r, http.StatusServiceUnavailable, failureClientPolicyUnavailable, "Sign-in unavailable", "We couldn't complete sign-in right now. Return and try again shortly.")
 		}
 		return
 	}
 	if !s.isValidRedirectURI(state.RedirectURI, resolved.Config) {
-		s.renderBrowserError(w, http.StatusBadRequest, failureAuthorizationProfileChanged)
+		s.renderBrowserError(w, r, http.StatusBadRequest, failureAuthorizationProfileChanged)
 		return
 	}
 	if !stateSatisfiesClientPolicy(&state, resolved.Config) || state.RefreshMode == "offline" && !state.OfflineConsent {
@@ -146,9 +146,9 @@ func (s *Server) complete(w http.ResponseWriter, r *http.Request, state OAuthSta
 	_, policyErr := s.policyResolver.ResolveUser(r.Context(), resolved, strings.ToLower(email))
 	if policyErr != nil {
 		if errors.Is(policyErr, authpolicy.ErrDenied) {
-			s.renderErrorPage(w, http.StatusForbidden, failureUserPolicyDenied, "Login failed", "Your account was not allowed.")
+			s.renderErrorPage(w, r, http.StatusForbidden, failureUserPolicyDenied, "Login failed", "Your account was not allowed.")
 		} else {
-			s.renderErrorPage(w, http.StatusServiceUnavailable, failureUserPolicyUnavailable, "Sign-in unavailable", "We couldn't complete sign-in right now. Return and try again shortly.")
+			s.renderErrorPage(w, r, http.StatusServiceUnavailable, failureUserPolicyUnavailable, "Sign-in unavailable", "We couldn't complete sign-in right now. Return and try again shortly.")
 		}
 		return
 	}

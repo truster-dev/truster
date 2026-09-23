@@ -16,42 +16,42 @@ import (
 // HandleGrants starts a dedicated authentication flow that cannot issue tokens.
 func (s *Server) HandleGrants(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		s.renderBrowserError(w, http.StatusMethodNotAllowed, failureGrantsMethod)
+		s.renderBrowserError(w, r, http.StatusMethodNotAllowed, failureGrantsMethod)
 		return
 	}
 	s.continueAuthorization(w, r, OAuthState{Purpose: "manage_grants", AuthTime: time.Now().UTC()})
 }
 
 // renderGrants renders active grants with fresh one-use action tokens.
-func (s *Server) renderGrants(w http.ResponseWriter, email string) {
+func (s *Server) renderGrants(w http.ResponseWriter, r *http.Request, email string) {
 	now := time.Now().UTC()
 	grants, err := s.store.ListActiveGrants(email, now)
 	if err != nil {
-		s.renderErrorPage(w, http.StatusServiceUnavailable, failureGrantListUnavailable, "Grant management unavailable", "We couldn't load your active grants. Return and try again shortly.")
+		s.renderErrorPage(w, r, http.StatusServiceUnavailable, failureGrantListUnavailable, "Grant management unavailable", "We couldn't load your active grants. Return and try again shortly.")
 		return
 	}
-	data := templates.GrantsData{Title: "Active grants", Email: email}
+	data := templates.GrantsData{PageData: s.pageData(r), Title: "Active grants", Email: email}
 	actions := make([]statedb.GrantAction, 0, len(grants))
 	for _, grant := range grants {
 		token, e := statedb.GenerateStateToken()
 		if e != nil {
-			s.renderErrorPage(w, http.StatusInternalServerError, failureGrantActionToken, "Grant management unavailable", "We couldn't load your active grants. Return and try again shortly.")
+			s.renderErrorPage(w, r, http.StatusInternalServerError, failureGrantActionToken, "Grant management unavailable", "We couldn't load your active grants. Return and try again shortly.")
 			return
 		}
 		actions = append(actions, statedb.GrantAction{Token: token, SID: grant.SID})
 		data.Grants = append(data.Grants, templates.GrantData{SID: grant.SID, ClientID: grant.ClientID, Mode: grant.Mode, ActionToken: token, Email: email, CreatedAt: grant.CreatedAt, LastUsedAt: grant.LastUsedAt, ExpiresAt: grant.ExpiresAt})
 	}
 	if err = s.store.CreateGrantActions(actions, email, "revoke", now, now.Add(5*time.Minute)); err != nil {
-		s.renderErrorPage(w, http.StatusServiceUnavailable, failureGrantActionsCreate, "Grant management unavailable", "We couldn't load your active grants. Return and try again shortly.")
+		s.renderErrorPage(w, r, http.StatusServiceUnavailable, failureGrantActionsCreate, "Grant management unavailable", "We couldn't load your active grants. Return and try again shortly.")
 		return
 	}
-	s.renderBrowserPage(w, http.StatusOK, "grants", data, failureGrantsRender)
+	s.renderBrowserPage(w, r, http.StatusOK, "grants", data, failureGrantsRender)
 }
 
 // HandleGrantRevoke atomically consumes a CSRF action and revokes its bound grant.
 func (s *Server) HandleGrantRevoke(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		s.renderBrowserError(w, http.StatusMethodNotAllowed, failureGrantRevokeMethod)
+		s.renderBrowserError(w, r, http.StatusMethodNotAllowed, failureGrantRevokeMethod)
 		return
 	}
 	if !s.parseBrowserForm(w, r, "email", "action_token", "sid") {
@@ -75,5 +75,5 @@ func (s *Server) HandleGrantRevoke(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.logBrowserFailure(status, failureGrantRevoke)
 	}
-	s.renderBrowserPage(w, status, "grants", templates.GrantsData{Title: "Grant revocation", Message: message}, failureGrantRevokeRender)
+	s.renderBrowserPage(w, r, status, "grants", templates.GrantsData{PageData: s.pageData(r), Title: "Grant revocation", Message: message}, failureGrantRevokeRender)
 }

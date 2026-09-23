@@ -20,7 +20,7 @@ func TestLoadDefaultsAndOverlay(t *testing.T) {
 		t.Fatal(err)
 	}
 	var b bytes.Buffer
-	if err = m.RenderPage(&b, "error", ErrorData{"Title", "Message"}); err != nil {
+	if err = m.RenderPage(&b, "error", ErrorData{Title: "Title", Message: "Message"}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(b.String(), "<main>") || !strings.Contains(b.String(), "Message") {
@@ -38,9 +38,24 @@ func TestLoadDefaultsAndOverlay(t *testing.T) {
 		t.Fatal(err)
 	}
 	b.Reset()
-	_ = m.RenderPage(&b, "error", ErrorData{"T", "M"})
+	_ = m.RenderPage(&b, "error", ErrorData{Title: "T", Message: "M"})
 	if !strings.Contains(b.String(), "custom M") {
 		t.Fatal("overlay not used")
+	}
+}
+
+// TestLoadExposesCommonPageData verifies every browser page can use the shared branding context.
+func TestLoadExposesCommonPageData(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "pages"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	layout := `{{define "layout"}}{{.Request.Method}} {{.Request.Host}} {{.Request.Path}} {{.IssuerURL}} {{.HomepageURL}} {{template "content" .}}{{end}}`
+	if err := os.WriteFile(filepath.Join(dir, "pages", "layout.html"), []byte(layout), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(dir); err != nil {
+		t.Fatal(err)
 	}
 }
 

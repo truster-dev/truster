@@ -21,6 +21,10 @@
       "$ref": "#/$defs/publicURI",
       "description": "Public issuer URL advertised to downstream OIDC clients. Production URLs must use HTTPS."
     },
+    "homepage_url": {
+      "$ref": "#/$defs/publicURI",
+      "description": "URL to redirect to if users visit Truster directly e.g. your app home page."
+    },
     "http_listen_addr": {
       "type": "string",
       "minLength": 1,

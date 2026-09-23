@@ -132,6 +132,7 @@ validation.
 | Setting | Required | Description |
 |---|---:|---|
 | `issuer_url` | yes | Public issuer URL. HTTPS is required except on localhost. |
+| `homepage_url` | no | URL to redirect to if users visit Truster directly e.g. your app home page. HTTPS is required except on localhost. |
 | `http_listen_addr` | yes | Address used by the built-in server. |
 | `serving_certificate` | no | Enables native HTTPS using `certificate_file` and `private_key_file`. Both paths are required when set. The files are reloaded in place after certificate rotation; a failed reload retains the last valid certificate. |
 | `state_database` | no | Protocol-state database. Defaults to SQLite at `./data/truster-state.db`. |
@@ -363,16 +364,23 @@ filesystem: provide only the files you want to replace.
 
 | Path | Data |
 |---|---|
-| `pages/layout.html` | Common HTML page layout. |
+| `pages/layout.html` | Common HTML page layout. Receives the current page's data and the shared data described below. |
 | `pages/selector.html` | `.Title`, `.Screen` (`login` or `signup`), `.State`, `.SiteKey`, `.Connectors` (`.ID`, `.DisplayName`, `.URL`, `.Email`). |
 | `pages/identity.html` | `.Title`, `.Token`, `.Emails` (`.Address`, `.Verified`, `.Primary`). |
 | `pages/otp.html` | `.Title`, `.ChallengeID`, `.Message`, `.Error`, `.Email`, `.ExpiresAt`, `.ExpiresIn`, `.RetryAfter`, `.RetryAfterSeconds`. |
 | `pages/error.html` | `.Title`, `.Message`. |
+| `pages/consent.html` | `.Title`, `.State`, `.ClientID`. |
+| `pages/grants.html` | `.Title`, `.Email`, `.Message`, `.Grants` (`.SID`, `.ClientID`, `.Mode`, `.ActionToken`, `.Email`, `.CreatedAt`, `.LastUsedAt`, `.ExpiresAt`). |
 | `email/layout.html` | Common HTML email layout. |
 | `email/otp.html` | `.Code`, `.ExpiresAt`, `.ExpiresIn`. |
 | `email/layout.txt` | Common plain-text email layout. |
 | `email/otp.txt` | `.Code`, `.ExpiresAt`, `.ExpiresIn`. |
 | `email/otp.subject.txt` | Email subject using `.Code`, `.ExpiresAt`, `.ExpiresIn`. |
+
+Every page and the common page layout can also use `.IssuerURL`,
+`.HomepageURL`, and `.Request.Method`, `.Request.Host`, and `.Request.Path`.
+Request headers, cookies, query parameters, and form values are intentionally not
+exposed because authentication requests can contain sensitive values.
 
 `.ExpiresAt` is an exact UTC `time.Time`; `.ExpiresIn` is the configured
 `time.Duration`. On the OTP page, `.RetryAfter` is the remaining resend cooldown

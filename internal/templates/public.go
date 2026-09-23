@@ -5,6 +5,7 @@
 package templates
 
 import (
+	"bytes"
 	"fmt"
 	"mime"
 	"net/http"
@@ -86,11 +87,25 @@ func loadPublic(dir string) (map[string]publicAsset, error) {
 	return assets, nil
 }
 
-// HandlePublic serves an exact file loaded from the public template subtree.
-func (m *Manager) HandlePublic(w http.ResponseWriter, r *http.Request) {
+// HandlePublic serves public files and renders the error template for unmatched paths.
+func (m *Manager) HandlePublic(w http.ResponseWriter, r *http.Request, pageData PageData) {
 	asset, ok := m.public[r.URL.Path]
 	if !ok {
-		http.NotFound(w, r)
+		var body bytes.Buffer
+		pageData.Request = RequestData{Method: r.Method, Host: r.Host, Path: r.URL.Path}
+		data := ErrorData{
+			PageData: pageData,
+			Title:    "Page Not Found",
+			Message:  "The page you requested does not exist.",
+		}
+		if err := m.RenderPage(&body, "error", data); err != nil {
+			http.Error(w, "page not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = body.WriteTo(w)
 		return
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {

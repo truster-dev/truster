@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -18,6 +19,12 @@ func TestHandlePublicServesFiles(t *testing.T) {
 	dir := t.TempDir()
 	publicDir := filepath.Join(dir, "public", "images")
 	if err := os.MkdirAll(publicDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "pages"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "pages", "error.html"), []byte(`{{define "content"}}<h1>{{.Title}}</h1><p>{{.Request.Method}} {{.Request.Host}} {{.Request.Path}} {{.IssuerURL}} {{.HomepageURL}}</p>{{end}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	content := []byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`)
@@ -31,7 +38,7 @@ func TestHandlePublicServesFiles(t *testing.T) {
 
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
 		response := httptest.NewRecorder()
-		manager.HandlePublic(response, httptest.NewRequest(method, "/images/logo.svg", nil))
+		manager.HandlePublic(response, httptest.NewRequest(method, "/images/logo.svg", nil), PageData{})
 		if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "image/svg+xml" || response.Header().Get("Content-Length") != strconv.Itoa(len(content)) {
 			t.Fatalf("%s response = %d, headers = %v", method, response.Code, response.Header())
 		}
@@ -47,14 +54,16 @@ func TestHandlePublicServesFiles(t *testing.T) {
 	}
 
 	methodResponse := httptest.NewRecorder()
-	manager.HandlePublic(methodResponse, httptest.NewRequest(http.MethodPost, "/images/logo.svg", nil))
+	manager.HandlePublic(methodResponse, httptest.NewRequest(http.MethodPost, "/images/logo.svg", nil), PageData{})
 	if methodResponse.Code != http.StatusMethodNotAllowed || methodResponse.Header().Get("Allow") != "GET, HEAD" {
 		t.Fatalf("POST response = %d, headers = %v", methodResponse.Code, methodResponse.Header())
 	}
 	missingResponse := httptest.NewRecorder()
-	manager.HandlePublic(missingResponse, httptest.NewRequest(http.MethodGet, "/images/missing.svg", nil))
-	if missingResponse.Code != http.StatusNotFound {
-		t.Fatalf("missing response = %d", missingResponse.Code)
+	missingRequest := httptest.NewRequest(http.MethodGet, "/images/missing.svg", nil)
+	missingRequest.Host = "auth.example.com"
+	manager.HandlePublic(missingResponse, missingRequest, PageData{IssuerURL: "https://auth.example.com", HomepageURL: "https://app.example.com"})
+	if missingResponse.Code != http.StatusNotFound || missingResponse.Header().Get("Content-Type") != "text/html; charset=utf-8" || !strings.Contains(missingResponse.Body.String(), "Page Not Found") || !strings.Contains(missingResponse.Body.String(), "GET auth.example.com /images/missing.svg https://auth.example.com https://app.example.com") {
+		t.Fatalf("missing response = %d %q", missingResponse.Code, missingResponse.Body.String())
 	}
 }
 
@@ -73,7 +82,9 @@ func TestHandlePublicLeavesRegisteredRoutesInControl(t *testing.T) {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/authorize", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("oidc")) })
-	mux.HandleFunc("/", manager.HandlePublic)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		manager.HandlePublic(w, r, PageData{})
+	})
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/authorize", nil))
 	if response.Body.String() != "oidc" {

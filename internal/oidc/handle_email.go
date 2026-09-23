@@ -42,7 +42,7 @@ func normalizeEmail(value string) (string, error) {
 // HandleEmailStart validates an email sign-in request and begins OTP verification.
 func (s *Server) HandleEmailStart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		s.renderBrowserError(w, http.StatusMethodNotAllowed, failureEmailStartMethod)
+		s.renderBrowserError(w, r, http.StatusMethodNotAllowed, failureEmailStartMethod)
 		return
 	}
 	if !s.parseBrowserForm(w, r, "state", "connector", "cf-turnstile-response", "email") {
@@ -50,13 +50,13 @@ func (s *Server) HandleEmailStart(w http.ResponseWriter, r *http.Request) {
 	}
 	state, err := s.authCodeMgr.DecodeState(r.PostForm.Get("state"))
 	if err != nil || state.ConnectorID != "" {
-		s.renderBrowserError(w, http.StatusBadRequest, failureEmailState)
+		s.renderBrowserError(w, r, http.StatusBadRequest, failureEmailState)
 		return
 	}
 	connectorID := r.PostForm.Get("connector")
 	connector, ok := s.config.UserLoginConnectors[connectorID]
 	if !ok || connector.Type != "email" {
-		s.renderBrowserError(w, http.StatusBadRequest, failureEmailConnector)
+		s.renderBrowserError(w, r, http.StatusBadRequest, failureEmailConnector)
 		return
 	}
 	state.ConnectorID = connectorID
@@ -65,12 +65,12 @@ func (s *Server) HandleEmailStart(w http.ResponseWriter, r *http.Request) {
 		remoteIP = remoteIPFromRequest(r, s.config.Email.Turnstile.RemoteIP.Source, s.config.Email.Turnstile.RemoteIP.Header)
 	}
 	if err = s.challenge.Verify(r.Context(), r.PostForm.Get("cf-turnstile-response"), remoteIP); err != nil {
-		s.renderErrorPage(w, http.StatusBadRequest, failureEmailSecurityCheck, "Security check failed", "We couldn't verify the security check. Return to sign in and try again.")
+		s.renderErrorPage(w, r, http.StatusBadRequest, failureEmailSecurityCheck, "Security check failed", "We couldn't verify the security check. Return to sign in and try again.")
 		return
 	}
 	email, err := normalizeEmail(r.PostForm.Get("email"))
 	if err != nil {
-		s.renderErrorPage(w, http.StatusBadRequest, failureEmailAddress, "Check your email address", "Enter a valid email address and try again.")
+		s.renderErrorPage(w, r, http.StatusBadRequest, failureEmailAddress, "Check your email address", "Enter a valid email address and try again.")
 		return
 	}
 	s.beginOTP(w, r, *state, connectorID, email, email)
@@ -98,12 +98,12 @@ func remoteIPFromRequest(r *http.Request, source, header string) string {
 func (s *Server) beginOTP(w http.ResponseWriter, r *http.Request, state OAuthState, id, subject, email string) {
 	challenge, err := statedb.GenerateStateToken()
 	if err != nil {
-		s.renderBrowserError(w, http.StatusInternalServerError, failureOTPChallengeCreate)
+		s.renderBrowserError(w, r, http.StatusInternalServerError, failureOTPChallengeCreate)
 		return
 	}
 	code, err := otpCode()
 	if err != nil {
-		s.renderBrowserError(w, http.StatusInternalServerError, failureOTPCodeCreate)
+		s.renderBrowserError(w, r, http.StatusInternalServerError, failureOTPCodeCreate)
 		return
 	}
 	flow := statedb.OTPFlow{FlowID: state.FlowID, ConnectorID: id, Subject: subject, Email: email, ClientID: state.ClientID, RedirectURI: state.RedirectURI, CodeChallenge: state.CodeChallenge, Nonce: state.Nonce, OIDCState: state.OIDCState, Scopes: state.Scopes, RefreshMode: state.RefreshMode, AuthTime: state.AuthTime, OfflineConsent: state.OfflineConsent, Purpose: state.Purpose, DPoPJKT: state.DPoPJKT, PushedAuthorization: state.PushedAuthorization}
@@ -111,9 +111,9 @@ func (s *Server) beginOTP(w http.ResponseWriter, r *http.Request, state OAuthSta
 	expiresAt, err := s.store.CreateOTP(challenge, email, code, flow, s.otpSecret, time.Now(), otpTTL)
 	if err != nil {
 		if errors.Is(err, statedb.ErrOTPSendLimit) {
-			s.renderErrorPage(w, http.StatusTooManyRequests, failureOTPSendLimit, "Please wait", "Too many verification codes were requested. Wait before starting sign-in again.")
+			s.renderErrorPage(w, r, http.StatusTooManyRequests, failureOTPSendLimit, "Please wait", "Too many verification codes were requested. Wait before starting sign-in again.")
 		} else {
-			s.renderErrorPage(w, http.StatusInternalServerError, failureOTPCreate, "Verification code unavailable", "We couldn't send a verification code. Wait a moment, then start sign-in again.")
+			s.renderErrorPage(w, r, http.StatusInternalServerError, failureOTPCreate, "Verification code unavailable", "We couldn't send a verification code. Wait a moment, then start sign-in again.")
 		}
 		return
 	}
@@ -121,17 +121,17 @@ func (s *Server) beginOTP(w http.ResponseWriter, r *http.Request, state OAuthSta
 		// Delivery outcomes stay indistinguishable to prevent address enumeration.
 		s.logBrowserFailure(http.StatusBadGateway, failureOTPSend)
 	}
-	s.renderBrowserPage(w, http.StatusOK, "otp", templates.OTPData{Title: "Verify email", ChallengeID: challenge, Message: "A code was sent.", Email: email, ExpiresIn: otpTTL, ExpiresAt: expiresAt}, failureOTPRender)
+	s.renderBrowserPage(w, r, http.StatusOK, "otp", templates.OTPData{PageData: s.pageData(r), Title: "Verify email", ChallengeID: challenge, Message: "A code was sent.", Email: email, ExpiresIn: otpTTL, ExpiresAt: expiresAt}, failureOTPRender)
 }
 
 // HandleEmailVerify consumes an OTP and completes authorization.
 func (s *Server) HandleEmailVerify(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		s.renderBrowserError(w, http.StatusMethodNotAllowed, failureEmailVerifyMethod)
+		s.renderBrowserError(w, r, http.StatusMethodNotAllowed, failureEmailVerifyMethod)
 		return
 	}
 	if s.config.Email == nil || s.mailer == nil || len(s.otpSecret) == 0 {
-		s.renderErrorPage(w, http.StatusNotFound, failureEmailVerificationUnavailable, "Email verification unavailable", "Email verification isn't available. Return and choose another sign-in method.")
+		s.renderErrorPage(w, r, http.StatusNotFound, failureEmailVerificationUnavailable, "Email verification unavailable", "Email verification isn't available. Return and choose another sign-in method.")
 		return
 	}
 	if !s.parseBrowserForm(w, r, "challenge", "code") {
@@ -140,16 +140,16 @@ func (s *Server) HandleEmailVerify(w http.ResponseWriter, r *http.Request) {
 	challengeID := r.PostForm.Get("challenge")
 	code := r.PostForm.Get("code")
 	if len(code) != 8 {
-		s.renderErrorPage(w, http.StatusBadRequest, failureOTPCodeFormat, "Check your verification code", "Enter the 8-digit code from your email and try again.")
+		s.renderErrorPage(w, r, http.StatusBadRequest, failureOTPCodeFormat, "Check your verification code", "Enter the 8-digit code from your email and try again.")
 		return
 	}
 	now := time.Now()
 	activeFlow, expiresAt, lookupErr := s.store.OTPFlow(challengeID, now)
 	if lookupErr != nil {
 		if errors.Is(lookupErr, statedb.ErrInvalidOTPChallenge) {
-			s.renderErrorPage(w, http.StatusBadRequest, failureOTPChallenge, "Verification request unavailable", "This verification request has expired or can no longer be used. Start sign-in again.")
+			s.renderErrorPage(w, r, http.StatusBadRequest, failureOTPChallenge, "Verification request unavailable", "This verification request has expired or can no longer be used. Start sign-in again.")
 		} else {
-			s.renderErrorPage(w, http.StatusInternalServerError, failureOTPLookup, "Email verification unavailable", "We couldn't verify your code right now. Wait a moment and try again.")
+			s.renderErrorPage(w, r, http.StatusInternalServerError, failureOTPLookup, "Email verification unavailable", "We couldn't verify your code right now. Wait a moment and try again.")
 		}
 		return
 	}
@@ -157,13 +157,13 @@ func (s *Server) HandleEmailVerify(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, statedb.ErrInvalidOTPCode) {
 			s.logBrowserFailure(http.StatusBadRequest, failureOTPCodeRejected)
-			s.renderBrowserPage(w, http.StatusBadRequest, "otp", templates.OTPData{Title: "Verify email", ChallengeID: challengeID, Email: activeFlow.Email, Error: "That code isn't valid. Check it and try again.", ExpiresAt: expiresAt, ExpiresIn: expiresAt.Sub(now)}, failureOTPRender)
+			s.renderBrowserPage(w, r, http.StatusBadRequest, "otp", templates.OTPData{PageData: s.pageData(r), Title: "Verify email", ChallengeID: challengeID, Email: activeFlow.Email, Error: "That code isn't valid. Check it and try again.", ExpiresAt: expiresAt, ExpiresIn: expiresAt.Sub(now)}, failureOTPRender)
 			return
 		}
 		if errors.Is(err, statedb.ErrInvalidOTPChallenge) {
-			s.renderErrorPage(w, http.StatusBadRequest, failureOTPChallenge, "Verification request unavailable", "This verification request has expired or can no longer be used. Start sign-in again.")
+			s.renderErrorPage(w, r, http.StatusBadRequest, failureOTPChallenge, "Verification request unavailable", "This verification request has expired or can no longer be used. Start sign-in again.")
 		} else {
-			s.renderErrorPage(w, http.StatusInternalServerError, failureOTPConsume, "Email verification unavailable", "We couldn't verify your code right now. Wait a moment and try again.")
+			s.renderErrorPage(w, r, http.StatusInternalServerError, failureOTPConsume, "Email verification unavailable", "We couldn't verify your code right now. Wait a moment and try again.")
 		}
 		return
 	}
@@ -193,11 +193,11 @@ func (s *Server) HandleEmailVerify(w http.ResponseWriter, r *http.Request) {
 // HandleEmailResend replaces and sends the code for an active challenge.
 func (s *Server) HandleEmailResend(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		s.renderBrowserError(w, http.StatusMethodNotAllowed, failureEmailResendMethod)
+		s.renderBrowserError(w, r, http.StatusMethodNotAllowed, failureEmailResendMethod)
 		return
 	}
 	if s.config.Email == nil || s.mailer == nil || len(s.otpSecret) == 0 {
-		s.renderErrorPage(w, http.StatusNotFound, failureEmailVerificationUnavailable, "Email verification unavailable", "Email verification isn't available. Return and choose another sign-in method.")
+		s.renderErrorPage(w, r, http.StatusNotFound, failureEmailVerificationUnavailable, "Email verification unavailable", "Email verification isn't available. Return and choose another sign-in method.")
 		return
 	}
 	if !s.parseBrowserForm(w, r, "challenge") {
@@ -228,12 +228,12 @@ func (s *Server) HandleEmailResend(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		s.logBrowserFailure(status, reason)
-		s.renderBrowserPage(w, status, "otp", templates.OTPData{Title: "Verify email", ChallengeID: id, Error: "A new code could not be sent. Wait a moment and try again.", Email: flow.Email, ExpiresIn: s.config.Email.OTPTTL.Duration(), RetryAfter: retryAfter, RetryAfterSeconds: retryAfterSeconds}, failureOTPRender)
+		s.renderBrowserPage(w, r, status, "otp", templates.OTPData{PageData: s.pageData(r), Title: "Verify email", ChallengeID: id, Error: "A new code could not be sent. Wait a moment and try again.", Email: flow.Email, ExpiresIn: s.config.Email.OTPTTL.Duration(), RetryAfter: retryAfter, RetryAfterSeconds: retryAfterSeconds}, failureOTPRender)
 		return
 	}
 	if err = s.mailer.SendOTP(r.Context(), flow.Email, code, expiresAt); err != nil {
 		// Delivery outcomes stay indistinguishable to prevent address enumeration.
 		s.logBrowserFailure(http.StatusBadGateway, failureOTPResendDelivery)
 	}
-	s.renderBrowserPage(w, http.StatusOK, "otp", templates.OTPData{Title: "Verify email", ChallengeID: id, Message: "A new code was sent.", Email: flow.Email, ExpiresIn: s.config.Email.OTPTTL.Duration(), ExpiresAt: expiresAt}, failureOTPRender)
+	s.renderBrowserPage(w, r, http.StatusOK, "otp", templates.OTPData{PageData: s.pageData(r), Title: "Verify email", ChallengeID: id, Message: "A new code was sent.", Email: flow.Email, ExpiresIn: s.config.Email.OTPTTL.Duration(), ExpiresAt: expiresAt}, failureOTPRender)
 }

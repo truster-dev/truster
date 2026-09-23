@@ -198,6 +198,12 @@ func TestConfigSchemaContracts(t *testing.T) {
 		{"external HTTP issuer", false, func(cfg map[string]any) {
 			cfg["issuer_url"] = "http://auth.example.com"
 		}},
+		{"HTTPS homepage", true, func(cfg map[string]any) {
+			cfg["homepage_url"] = "https://app.example.com/sign-in"
+		}},
+		{"external HTTP homepage", false, func(cfg map[string]any) {
+			cfg["homepage_url"] = "http://app.example.com"
+		}},
 		{"unsupported redirect URI scheme", false, func(cfg map[string]any) {
 			cfg["static_policy"].(map[string]any)["default_redirect_uris"] = []any{"ftp://app.example.com/callback"}
 		}},

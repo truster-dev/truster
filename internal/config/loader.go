@@ -518,6 +518,11 @@ func validate(cfg *Config) error {
 	if err := validateIssuerURL(cfg.IssuerURL); err != nil {
 		return fmt.Errorf("issuer_url: %w", err)
 	}
+	if cfg.HomepageURL != "" {
+		if err := validateHomepageURL(cfg.HomepageURL); err != nil {
+			return fmt.Errorf("homepage_url: %w", err)
+		}
+	}
 
 	if cfg.HTTPListenAddr == "" {
 		return fmt.Errorf("http_listen_addr is required")
@@ -791,6 +796,28 @@ func validateIssuerURL(issuer string) error {
 		return fmt.Errorf("http scheme only allowed for localhost in development")
 	}
 
+	return nil
+}
+
+// validateHomepageURL requires an absolute public web URL without embedded credentials.
+func validateHomepageURL(homepage string) error {
+	u, err := url.Parse(homepage)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	if !u.IsAbs() || u.Host == "" {
+		return fmt.Errorf("must be absolute and include a host")
+	}
+	if u.User != nil {
+		return fmt.Errorf("must not contain userinfo")
+	}
+	if u.Scheme == "http" {
+		if u.Hostname() != "localhost" && u.Hostname() != "127.0.0.1" && u.Hostname() != "::1" {
+			return fmt.Errorf("http scheme only allowed for localhost in development")
+		}
+	} else if u.Scheme != "https" {
+		return fmt.Errorf("scheme must be http or https")
+	}
 	return nil
 }
 

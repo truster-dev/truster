@@ -57,6 +57,7 @@ func ParseDuration(value string) (time.Duration, error) {
 type Config struct {
 	Schema              string                       `json:"$schema,omitempty"`
 	IssuerURL           string                       `json:"issuer_url"`
+	HomepageURL         string                       `json:"homepage_url,omitempty"`
 	HTTPListenAddr      string                       `json:"http_listen_addr"`
 	ServingCertificate  *ServingCertificateConfig    `json:"serving_certificate,omitempty"`
 	SigningAlgorithm    string                       `json:"signing_algorithm,omitempty"`

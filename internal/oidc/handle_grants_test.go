@@ -66,7 +66,7 @@ func TestRenderGrantsCreatesUsableSingleUseAction(t *testing.T) {
 	server, store := grantsServer(t)
 	material := createRevocableGrant(t, store, "managed-sid", "managed-client")
 	response := httptest.NewRecorder()
-	server.renderGrants(response, "USER@example.com")
+	server.renderGrants(response, httptest.NewRequest(http.MethodGet, "/grants", nil), "USER@example.com")
 	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("render response = %d headers=%v body=%q", response.Code, response.Header(), response.Body.String())
 	}

@@ -15,17 +15,17 @@ import (
 )
 
 // renderSelector renders configured sign-in methods with opaque authorization state.
-func (s *Server) renderSelector(w http.ResponseWriter, state OAuthState, ids []string) {
+func (s *Server) renderSelector(w http.ResponseWriter, r *http.Request, state OAuthState, ids []string) {
 	token, err := s.authCodeMgr.EncodeState(state)
 	if err != nil {
-		s.renderBrowserError(w, http.StatusInternalServerError, failureSelectorStateEncode)
+		s.renderBrowserError(w, r, http.StatusInternalServerError, failureSelectorStateEncode)
 		return
 	}
-	s.renderSelectorWithState(w, state, ids, token)
+	s.renderSelectorWithState(w, r, state, ids, token)
 }
 
 // renderSelectorWithState renders configured sign-in methods with existing opaque authorization state.
-func (s *Server) renderSelectorWithState(w http.ResponseWriter, state OAuthState, ids []string, token string) {
+func (s *Server) renderSelectorWithState(w http.ResponseWriter, r *http.Request, state OAuthState, ids []string, token string) {
 	items := make([]templates.ConnectorData, 0, len(ids))
 	for _, id := range ids {
 		cfg := s.config.UserLoginConnectors[id]
@@ -41,7 +41,7 @@ func (s *Server) renderSelectorWithState(w http.ResponseWriter, state OAuthState
 		title = "Sign up"
 		screen = "signup"
 	}
-	s.renderBrowserPage(w, http.StatusOK, "selector", templates.SelectorData{Title: title, Screen: screen, State: token, SiteKey: site, Connectors: items}, failureSelectorRender)
+	s.renderBrowserPage(w, r, http.StatusOK, "selector", templates.SelectorData{PageData: s.pageData(r), Title: title, Screen: screen, State: token, SiteKey: site, Connectors: items}, failureSelectorRender)
 }
 
 // connectorIDs returns connector IDs in configured display order.
@@ -68,11 +68,11 @@ func (s *Server) HandleSelect(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("connector")
 	state, err := s.authCodeMgr.DecodeState(r.URL.Query().Get("state"))
 	if err != nil {
-		s.renderBrowserError(w, http.StatusBadRequest, failureSelectorState)
+		s.renderBrowserError(w, r, http.StatusBadRequest, failureSelectorState)
 		return
 	}
 	if state.ConnectorID != "" {
-		s.renderBrowserError(w, http.StatusBadRequest, failureSelectorStateAlreadyBound)
+		s.renderBrowserError(w, r, http.StatusBadRequest, failureSelectorStateAlreadyBound)
 		return
 	}
 	s.selectConnector(w, r, id, *state)
@@ -82,22 +82,22 @@ func (s *Server) HandleSelect(w http.ResponseWriter, r *http.Request) {
 func (s *Server) selectConnector(w http.ResponseWriter, r *http.Request, id string, state OAuthState) {
 	cfg, ok := s.config.UserLoginConnectors[id]
 	if !ok {
-		s.renderBrowserError(w, http.StatusBadRequest, failureConnectorUnknown)
+		s.renderBrowserError(w, r, http.StatusBadRequest, failureConnectorUnknown)
 		return
 	}
 	if cfg.Type == "email" {
-		s.renderBrowserError(w, http.StatusBadRequest, failureEmailConnectorSelection)
+		s.renderBrowserError(w, r, http.StatusBadRequest, failureEmailConnectorSelection)
 		return
 	}
 	state.ConnectorID = id
 	token, err := s.authCodeMgr.EncodeState(state)
 	if err != nil {
-		s.renderBrowserError(w, http.StatusInternalServerError, failureConnectorStateEncode)
+		s.renderBrowserError(w, r, http.StatusInternalServerError, failureConnectorStateEncode)
 		return
 	}
 	connector, ok := s.connectors[id]
 	if !ok {
-		s.renderBrowserError(w, http.StatusServiceUnavailable, failureConnectorUnavailable)
+		s.renderBrowserError(w, r, http.StatusServiceUnavailable, failureConnectorUnavailable)
 		return
 	}
 	var options []oauth2.AuthCodeOption

@@ -319,7 +319,7 @@ func serve(ctx context.Context, output io.Writer, configPath string, debug, demo
 	mux.HandleFunc("POST /email/start", server.HandleEmailStart)
 	mux.HandleFunc("POST /email/verify", server.HandleEmailVerify)
 	mux.HandleFunc("POST /email/resend", server.HandleEmailResend)
-	mux.HandleFunc("/", templateManager.HandlePublic)
+	mux.HandleFunc("/", server.HandleFallback)
 	httpServer := &http.Server{Addr: cfg.HTTPListenAddr, Handler: server.SecurityHeaders(server.LimitPublicEndpoints(mux)), TLSConfig: servingTLSConfig, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
 
 	// Run the server and wait for either a server error or a shutdown signal.

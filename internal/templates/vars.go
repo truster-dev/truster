@@ -6,6 +6,13 @@ package templates
 
 import "time"
 
+// PageData supplies common, non-sensitive context to browser page templates.
+type PageData struct {
+	Request     RequestData
+	IssuerURL   string
+	HomepageURL string
+}
+
 // ConnectorData describes a sign-in option rendered by the selector.
 type ConnectorData struct {
 	ID, DisplayName, URL string
@@ -14,6 +21,7 @@ type ConnectorData struct {
 
 // SelectorData supplies data to the sign-in selector template.
 type SelectorData struct {
+	PageData
 	Title      string
 	Screen     string
 	State      string
@@ -23,6 +31,7 @@ type SelectorData struct {
 
 // OTPData supplies data to the OTP entry template.
 type OTPData struct {
+	PageData
 	Title, ChallengeID, Message, Error, Email string
 	ExpiresIn, RetryAfter                     time.Duration
 	ExpiresAt                                 time.Time
@@ -30,7 +39,10 @@ type OTPData struct {
 }
 
 // ConsentData supplies data to the offline-access consent template.
-type ConsentData struct{ Title, State, ClientID string }
+type ConsentData struct {
+	PageData
+	Title, State, ClientID string
+}
 
 // GrantData describes one active grant and its one-use revocation action.
 type GrantData struct {
@@ -40,12 +52,19 @@ type GrantData struct {
 
 // GrantsData supplies the self-service grant management page.
 type GrantsData struct {
+	PageData
 	Title, Email, Message string
 	Grants                []GrantData
 }
 
+// RequestData supplies non-sensitive request metadata to browser page templates.
+type RequestData struct{ Method, Host, Path string }
+
 // ErrorData supplies data to the error page template.
-type ErrorData struct{ Title, Message string }
+type ErrorData struct {
+	PageData
+	Title, Message string
+}
 
 // EmailData describes one selectable upstream email assertion.
 type EmailData struct {
@@ -56,6 +75,7 @@ type EmailData struct {
 
 // IdentityData supplies data to the identity selection template.
 type IdentityData struct {
+	PageData
 	Title  string
 	Token  string
 	Emails []EmailData
