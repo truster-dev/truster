@@ -110,16 +110,47 @@ func (s *Store) ConsumeGrantActionAndRevoke(token, email, sid, action string, no
 	return nil
 }
 
-// CreateIdentitySelection stores identity assertions server-side behind an opaque token.
-func (s *Store) CreateIdentitySelection(token, state, connector, subject string, emails []upstream.Email, expiry time.Time) error {
+// CreateIdentitySelection stores identity assertions and keeps their active OAuth state valid for the same lifetime.
+func (s *Store) CreateIdentitySelection(token, state, connector, subject string, emails []upstream.Email, stateTTL, selectionTTL time.Duration) error {
+	if stateTTL <= 0 || selectionTTL <= 0 {
+		return ErrInvalidGrant
+	}
 	h := sha256.Sum256([]byte(token))
 	data, err := json.Marshal(emails)
 	if err != nil {
 		return fmt.Errorf("encode identity selection: %w", err)
 	}
-	_, err = s.db.Exec(`INSERT INTO {{state}}identity_selections(token_hash,state_token,connector_id,subject,emails_json,expires_at) VALUES($1,$2,$3,$4,$5,$6)`, h[:], state, connector, subject, data, expiry)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin identity selection: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var createdAt, currentExpiry time.Time
+	err = tx.QueryRow(`SELECT created_at,expires_at FROM {{state}}oauth_states WHERE state_token=$1`+s.lockRows(), state).Scan(&createdAt, &currentExpiry)
+	if err == sql.ErrNoRows {
+		return ErrInvalidGrant
+	}
+	if err != nil {
+		return fmt.Errorf("lock identity selection state: %w", err)
+	}
+	now := time.Now()
+	if !currentExpiry.After(now) || !createdAt.Add(stateTTL).After(now) {
+		return ErrInvalidGrant
+	}
+	expiry := now.Add(selectionTTL)
+	result, err := tx.Exec(`UPDATE {{state}}oauth_states SET expires_at=$1 WHERE state_token=$2`, expiry, state)
+	if err != nil {
+		return fmt.Errorf("extend identity selection state: %w", err)
+	}
+	if affected, rowsErr := result.RowsAffected(); rowsErr != nil || affected != 1 {
+		return ErrInvalidGrant
+	}
+	_, err = tx.Exec(`INSERT INTO {{state}}identity_selections(token_hash,state_token,connector_id,subject,emails_json,expires_at) VALUES($1,$2,$3,$4,$5,$6)`, h[:], state, connector, subject, data, expiry)
 	if err != nil {
 		return fmt.Errorf("create identity selection: %w", err)
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit identity selection: %w", err)
 	}
 	return nil
 }

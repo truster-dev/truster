@@ -18,7 +18,7 @@ import (
 func (s *Server) renderIdentitySelection(w http.ResponseWriter, stateToken, connectorID string, identity upstream.Identity) {
 	token, err := statedb.GenerateStateToken()
 	if err == nil {
-		err = s.store.CreateIdentitySelection(token, stateToken, connectorID, identity.Subject, identity.Emails, time.Now().Add(5*time.Minute))
+		err = s.store.CreateIdentitySelection(token, stateToken, connectorID, identity.Subject, identity.Emails, authorizationStateTTL, 5*time.Minute)
 	}
 	if err != nil {
 		s.renderBrowserError(w, http.StatusInternalServerError, failureIdentitySelectionCreate)

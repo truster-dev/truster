@@ -11,6 +11,8 @@ import (
 	"github.com/truster-dev/truster/v2/internal/statedb"
 )
 
+const authorizationStateTTL = 10 * time.Minute
+
 // OAuthState represents the OAuth2 state parameter data.
 // It contains client information and PKCE details that need to be preserved across the OAuth flow.
 type OAuthState struct {
@@ -47,7 +49,7 @@ func (m *AuthCodeManager) EncodeState(state OAuthState) (string, error) {
 		Nonce:         state.Nonce,
 		OIDCState:     state.OIDCState,
 		CreatedAt:     now,
-		ExpiresAt:     now.Add(10 * time.Minute),
+		ExpiresAt:     now.Add(authorizationStateTTL),
 		ConnectorID:   state.ConnectorID,
 		Scopes:        state.Scopes, RefreshMode: state.RefreshMode, AuthTime: state.AuthTime,
 		OfflineConsent:      state.OfflineConsent,

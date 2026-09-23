@@ -17,6 +17,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/truster-dev/truster/v2/internal/upstream"
 )
 
 // postgreSQLStores opens two independent pools against the opt-in integration database.
@@ -191,6 +193,61 @@ func TestPostgreSQLCrossReplicaSemantics(t *testing.T) {
 	}
 	if winners.Load() != 5 {
 		t.Fatalf("OTP quota admitted %d sends", winners.Load())
+	}
+}
+
+// TestPostgreSQLIdentitySelectionExtendsOAuthState verifies chooser and state lifetimes update atomically in production storage.
+func TestPostgreSQLIdentitySelectionExtendsOAuthState(t *testing.T) {
+	a, b := postgreSQLStores(t)
+	now := time.Now().UTC()
+	state := &OAuthState{StateToken: "identity-state", ClientID: "client", RedirectURI: "https://client.example", CodeChallenge: "challenge", OIDCState: "state", CreatedAt: now.Add(-9 * time.Minute), ExpiresAt: now.Add(time.Minute), Scopes: "openid", AuthTime: now.Add(-9 * time.Minute)}
+	if err := a.SaveState(state); err != nil {
+		t.Fatal(err)
+	}
+	before := time.Now()
+	if err := a.CreateIdentitySelection("identity-selection", state.StateToken, "github", "123", []upstream.Email{{Address: "user@example.com", Verified: true}}, 10*time.Minute, 5*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	after := time.Now()
+	stored, err := b.PeekState(state.StateToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ExpiresAt.Before(before.Add(5*time.Minute)) || stored.ExpiresAt.After(after.Add(5*time.Minute)) {
+		t.Fatalf("OAuth state expiry = %v, want between %v and %v", stored.ExpiresAt, before.Add(5*time.Minute), after.Add(5*time.Minute))
+	}
+}
+
+// TestPostgreSQLIdentitySelectionChecksExpiryAfterLock verifies lock waits cannot revive state that expired meanwhile.
+func TestPostgreSQLIdentitySelectionChecksExpiryAfterLock(t *testing.T) {
+	a, b := postgreSQLStores(t)
+	now := time.Now().UTC()
+	state := &OAuthState{StateToken: "delayed-identity-state", ClientID: "client", RedirectURI: "https://client.example", CodeChallenge: "challenge", OIDCState: "state", CreatedAt: now, ExpiresAt: now.Add(200 * time.Millisecond), Scopes: "openid", AuthTime: now}
+	if err := a.SaveState(state); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := a.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lock.Rollback() }()
+	var token string
+	if err = lock.QueryRow(`SELECT state_token FROM {{state}}oauth_states WHERE state_token=$1`+a.lockRows(), state.StateToken).Scan(&token); err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		result <- b.CreateIdentitySelection("delayed-selection", state.StateToken, "github", "123", []upstream.Email{{Address: "user@example.com", Verified: true}}, 10*time.Minute, 5*time.Minute)
+	}()
+	time.Sleep(400 * time.Millisecond)
+	if err = lock.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-result; !errors.Is(err, ErrInvalidGrant) {
+		t.Fatalf("delayed identity selection error = %v, want invalid grant", err)
+	}
+	if _, _, _, _, err = b.ConsumeIdentitySelection("delayed-selection", time.Now()); !errors.Is(err, ErrInvalidGrant) {
+		t.Fatalf("delayed identity selection was created: %v", err)
 	}
 }
 
