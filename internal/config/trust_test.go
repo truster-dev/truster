@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
+
+	"github.com/truster-dev/truster/v2/trustpolicy"
 )
 
 // TestCompileTrustSchemaInheritance verifies ordinary overrides remain composed with required policy claims.
@@ -110,7 +112,7 @@ func TestTrustPresetAndEffectiveIdentityValidation(t *testing.T) {
 		{provider: "buildkite", claim: "unknown", allowed: false},
 		{provider: "oidc", claim: "https://example.com/claims/team", allowed: true},
 	} {
-		err := validateClaimName(test.claim, test.provider)
+		err := trustpolicy.ValidateClaimName(test.claim, test.provider)
 		if test.allowed != (err == nil) {
 			t.Errorf("validateClaimName(%q, %q) error = %v", test.claim, test.provider, err)
 		}

@@ -1,0 +1,1181 @@
+{
+  "$comment": "The bundle root intentionally rejects instances because a bare claims object does not identify its provider.",
+  "$defs": {
+    "buildkite": {
+      "additionalProperties": false,
+      "description": "Validates one claims or required_claims object. Final merged-policy validation remains authoritative in Truster.",
+      "maxProperties": 64,
+      "patternProperties": {
+        "^agent_tag:[\\s\\S]{1,246}$": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        }
+      },
+      "properties": {
+        "agent_id": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "aud": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "azp": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "build_branch": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "build_commit": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "build_id": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "build_number": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "build_source": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "build_tag": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "cluster_id": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "cluster_name": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "email": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "email_verified": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "exp": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "https://aws.amazon.com/tags": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "iat": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "iss": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "job_id": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "jti": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "nbf": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "nonce": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "organization_id": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "organization_slug": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "pipeline_id": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "pipeline_slug": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "queue_id": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "queue_key": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "runner_environment": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "step_key": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "sub": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        }
+      },
+      "type": "object"
+    },
+    "github": {
+      "additionalProperties": false,
+      "description": "Validates one claims or required_claims object. Final merged-policy validation remains authoritative in Truster.",
+      "maxProperties": 64,
+      "patternProperties": {
+        "^repo_property_[\\s\\S]{1,242}$": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        }
+      },
+      "properties": {
+        "actor": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "actor_id": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "aud": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "azp": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "base_ref": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "check_run_id": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "email": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "email_verified": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "enterprise": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "enterprise_id": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "environment": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "environment_node_id": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "event_name": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "exp": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "head_ref": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "iat": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "iss": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "issuer_scope": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "job_workflow_ref": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "job_workflow_sha": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "jti": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "nbf": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "nonce": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "ref": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "ref_protected": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "ref_type": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "repository": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "repository_id": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "repository_owner": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "repository_owner_id": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "repository_visibility": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "run_attempt": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "run_id": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "run_number": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "runner_environment": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "sha": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "sub": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "workflow": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "workflow_ref": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "workflow_sha": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        }
+      },
+      "type": "object"
+    },
+    "oidc": {
+      "additionalProperties": {
+        "$ref": "#/$defs/trustSchemaFragment"
+      },
+      "description": "Validates one claims or required_claims object. Final merged-policy validation remains authoritative in Truster.",
+      "maxProperties": 64,
+      "properties": {
+        "aud": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "azp": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "email": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "email_verified": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "exp": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "iat": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "iss": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "jti": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "nbf": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "nonce": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        },
+        "sub": {
+          "$ref": "#/$defs/trustSchemaFragment"
+        }
+      },
+      "propertyNames": {
+        "maxLength": 256,
+        "minLength": 1
+      },
+      "type": "object"
+    },
+    "safeValue0": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/safeValue1"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/safeValue1"
+          },
+          "maxProperties": 64,
+          "propertyNames": {
+            "not": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "$anchor",
+                    "$dynamicAnchor",
+                    "$dynamicRef",
+                    "$id",
+                    "$recursiveRef",
+                    "$ref",
+                    "$schema",
+                    "$vocabulary"
+                  ]
+                },
+                {
+                  "pattern": "^content"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "safeValue1": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/safeValue2"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/safeValue2"
+          },
+          "maxProperties": 64,
+          "propertyNames": {
+            "not": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "$anchor",
+                    "$dynamicAnchor",
+                    "$dynamicRef",
+                    "$id",
+                    "$recursiveRef",
+                    "$ref",
+                    "$schema",
+                    "$vocabulary"
+                  ]
+                },
+                {
+                  "pattern": "^content"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "safeValue10": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/safeValue11"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/safeValue11"
+          },
+          "maxProperties": 64,
+          "propertyNames": {
+            "not": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "$anchor",
+                    "$dynamicAnchor",
+                    "$dynamicRef",
+                    "$id",
+                    "$recursiveRef",
+                    "$ref",
+                    "$schema",
+                    "$vocabulary"
+                  ]
+                },
+                {
+                  "pattern": "^content"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "safeValue11": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/safeValue12"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/safeValue12"
+          },
+          "maxProperties": 64,
+          "propertyNames": {
+            "not": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "$anchor",
+                    "$dynamicAnchor",
+                    "$dynamicRef",
+                    "$id",
+                    "$recursiveRef",
+                    "$ref",
+                    "$schema",
+                    "$vocabulary"
+                  ]
+                },
+                {
+                  "pattern": "^content"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "safeValue12": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/safeValue13"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/safeValue13"
+          },
+          "maxProperties": 64,
+          "propertyNames": {
+            "not": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "$anchor",
+                    "$dynamicAnchor",
+                    "$dynamicRef",
+                    "$id",
+                    "$recursiveRef",
+                    "$ref",
+                    "$schema",
+                    "$vocabulary"
+                  ]
+                },
+                {
+                  "pattern": "^content"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "safeValue13": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/safeValue14"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/safeValue14"
+          },
+          "maxProperties": 64,
+          "propertyNames": {
+            "not": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "$anchor",
+                    "$dynamicAnchor",
+                    "$dynamicRef",
+                    "$id",
+                    "$recursiveRef",
+                    "$ref",
+                    "$schema",
+                    "$vocabulary"
+                  ]
+                },
+                {
+                  "pattern": "^content"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "safeValue14": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/safeValue15"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/safeValue15"
+          },
+          "maxProperties": 64,
+          "propertyNames": {
+            "not": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "$anchor",
+                    "$dynamicAnchor",
+                    "$dynamicRef",
+                    "$id",
+                    "$recursiveRef",
+                    "$ref",
+                    "$schema",
+                    "$vocabulary"
+                  ]
+                },
+                {
+                  "pattern": "^content"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "safeValue15": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/safeValue16"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/safeValue16"
+          },
+          "maxProperties": 64,
+          "propertyNames": {
+            "not": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "$anchor",
+                    "$dynamicAnchor",
+                    "$dynamicRef",
+                    "$id",
+                    "$recursiveRef",
+                    "$ref",
+                    "$schema",
+                    "$vocabulary"
+                  ]
+                },
+                {
+                  "pattern": "^content"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "safeValue16": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        {
+          "maxItems": 0,
+          "type": "array"
+        },
+        {
+          "maxProperties": 0,
+          "propertyNames": {
+            "not": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "$anchor",
+                    "$dynamicAnchor",
+                    "$dynamicRef",
+                    "$id",
+                    "$recursiveRef",
+                    "$ref",
+                    "$schema",
+                    "$vocabulary"
+                  ]
+                },
+                {
+                  "pattern": "^content"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "safeValue2": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/safeValue3"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/safeValue3"
+          },
+          "maxProperties": 64,
+          "propertyNames": {
+            "not": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "$anchor",
+                    "$dynamicAnchor",
+                    "$dynamicRef",
+                    "$id",
+                    "$recursiveRef",
+                    "$ref",
+                    "$schema",
+                    "$vocabulary"
+                  ]
+                },
+                {
+                  "pattern": "^content"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "safeValue3": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/safeValue4"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/safeValue4"
+          },
+          "maxProperties": 64,
+          "propertyNames": {
+            "not": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "$anchor",
+                    "$dynamicAnchor",
+                    "$dynamicRef",
+                    "$id",
+                    "$recursiveRef",
+                    "$ref",
+                    "$schema",
+                    "$vocabulary"
+                  ]
+                },
+                {
+                  "pattern": "^content"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "safeValue4": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/safeValue5"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/safeValue5"
+          },
+          "maxProperties": 64,
+          "propertyNames": {
+            "not": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "$anchor",
+                    "$dynamicAnchor",
+                    "$dynamicRef",
+                    "$id",
+                    "$recursiveRef",
+                    "$ref",
+                    "$schema",
+                    "$vocabulary"
+                  ]
+                },
+                {
+                  "pattern": "^content"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "safeValue5": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/safeValue6"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/safeValue6"
+          },
+          "maxProperties": 64,
+          "propertyNames": {
+            "not": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "$anchor",
+                    "$dynamicAnchor",
+                    "$dynamicRef",
+                    "$id",
+                    "$recursiveRef",
+                    "$ref",
+                    "$schema",
+                    "$vocabulary"
+                  ]
+                },
+                {
+                  "pattern": "^content"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "safeValue6": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/safeValue7"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/safeValue7"
+          },
+          "maxProperties": 64,
+          "propertyNames": {
+            "not": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "$anchor",
+                    "$dynamicAnchor",
+                    "$dynamicRef",
+                    "$id",
+                    "$recursiveRef",
+                    "$ref",
+                    "$schema",
+                    "$vocabulary"
+                  ]
+                },
+                {
+                  "pattern": "^content"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "safeValue7": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/safeValue8"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/safeValue8"
+          },
+          "maxProperties": 64,
+          "propertyNames": {
+            "not": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "$anchor",
+                    "$dynamicAnchor",
+                    "$dynamicRef",
+                    "$id",
+                    "$recursiveRef",
+                    "$ref",
+                    "$schema",
+                    "$vocabulary"
+                  ]
+                },
+                {
+                  "pattern": "^content"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "safeValue8": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/safeValue9"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/safeValue9"
+          },
+          "maxProperties": 64,
+          "propertyNames": {
+            "not": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "$anchor",
+                    "$dynamicAnchor",
+                    "$dynamicRef",
+                    "$id",
+                    "$recursiveRef",
+                    "$ref",
+                    "$schema",
+                    "$vocabulary"
+                  ]
+                },
+                {
+                  "pattern": "^content"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "safeValue9": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/safeValue10"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/safeValue10"
+          },
+          "maxProperties": 64,
+          "propertyNames": {
+            "not": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "$anchor",
+                    "$dynamicAnchor",
+                    "$dynamicRef",
+                    "$id",
+                    "$recursiveRef",
+                    "$ref",
+                    "$schema",
+                    "$vocabulary"
+                  ]
+                },
+                {
+                  "pattern": "^content"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "trustSchemaFragment": {
+      "allOf": [
+        {
+          "$ref": "https://json-schema.org/draft/2020-12/schema"
+        },
+        {
+          "$ref": "#/$defs/safeValue0"
+        }
+      ]
+    }
+  },
+  "$id": "https://truster.dev/schema/v2/trust-policy.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Generated from Truster's runtime trust policy rules. Select $defs/github, $defs/buildkite, or $defs/oidc after resolving the configured issuer's provider.",
+  "not": {},
+  "title": "Truster trust policy schemas"
+}

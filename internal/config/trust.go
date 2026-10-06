@@ -5,15 +5,14 @@
 package config
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/url"
 	"regexp"
-	"sort"
 	"strings"
 
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
+	"github.com/truster-dev/truster/v2/trustpolicy"
 )
 
 const maxTrustBindings = 100
@@ -22,14 +21,6 @@ var trustNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$`)
 
 // ValidTrustBindingID reports whether id satisfies the shared static and dynamic binding identifier contract.
 func ValidTrustBindingID(id string) bool { return trustNamePattern.MatchString(id) }
-
-// denySchemaLoader prevents all external schema retrieval.
-type denySchemaLoader struct{}
-
-// Load always rejects external schema retrieval.
-func (denySchemaLoader) Load(location string) (any, error) {
-	return nil, fmt.Errorf("external schema %q is disabled", location)
-}
 
 // TrustIssuerConfig configures external OIDC verification.
 type TrustIssuerConfig struct {
@@ -63,11 +54,6 @@ type EffectiveTrustBinding struct {
 	ID, Policy, Issuer, Subject string
 	Groups                      []string
 	Schema                      *jsonschema.Schema
-}
-
-var presetClaims = map[string]map[string]bool{
-	"github":    {"actor": true, "actor_id": true, "base_ref": true, "check_run_id": true, "enterprise": true, "enterprise_id": true, "environment": true, "environment_node_id": true, "event_name": true, "head_ref": true, "issuer_scope": true, "job_workflow_ref": true, "job_workflow_sha": true, "ref": true, "ref_protected": true, "ref_type": true, "repository": true, "repository_id": true, "repository_owner": true, "repository_owner_id": true, "repository_visibility": true, "run_attempt": true, "run_id": true, "run_number": true, "runner_environment": true, "sha": true, "workflow": true, "workflow_ref": true, "workflow_sha": true},
-	"buildkite": {"agent_id": true, "build_branch": true, "build_commit": true, "build_id": true, "build_number": true, "build_source": true, "build_tag": true, "cluster_id": true, "cluster_name": true, "job_id": true, "organization_id": true, "organization_slug": true, "pipeline_id": true, "pipeline_slug": true, "queue_id": true, "queue_key": true, "runner_environment": true, "step_key": true, "https://aws.amazon.com/tags": true},
 }
 
 // validateTrust applies presets, validates inheritance, and compiles every binding schema.
@@ -162,12 +148,8 @@ func validateTrust(cfg *Config) error {
 				claims[k] = v
 			}
 			for k, v := range binding.Claims {
-				if err := validateClaimName(k, issuer.Provider); err != nil {
+				if err := trustpolicy.ValidateClaimName(k, issuer.Provider); err != nil {
 					return fmt.Errorf("client %q binding %q: %w", clientID, binding.ID, err)
-				}
-				var fragment any
-				if err := decodeFragment(v, &fragment); err != nil {
-					return fmt.Errorf("client %q binding %q claim %q: %w", clientID, binding.ID, k, err)
 				}
 				claims[k] = v
 			}
@@ -184,14 +166,10 @@ func validateTrust(cfg *Config) error {
 
 // validatePolicyFragments validates every policy fragment before inheritance or overrides are applied.
 func validatePolicyFragments(policy TrustPolicyConfig, provider string) error {
-	for kind, fragments := range map[string]map[string]json.RawMessage{"claim": policy.Claims, "required claim": policy.RequiredClaims} {
-		for name, raw := range fragments {
-			if err := validateClaimName(name, provider); err != nil {
+	for _, fragments := range []map[string]json.RawMessage{policy.Claims, policy.RequiredClaims} {
+		for name := range fragments {
+			if err := trustpolicy.ValidateClaimName(name, provider); err != nil {
 				return err
-			}
-			var fragment any
-			if err := decodeFragment(raw, &fragment); err != nil {
-				return fmt.Errorf("%s %q: %w", kind, name, err)
 			}
 		}
 	}
@@ -203,136 +181,11 @@ func validatePolicyFragments(policy TrustPolicyConfig, provider string) error {
 	return nil
 }
 
-// validateClaimName accepts standard claims and narrowly bounded provider claims.
-func validateClaimName(name, provider string) error {
-	standard := map[string]bool{"iss": true, "sub": true, "aud": true, "exp": true, "nbf": true, "iat": true, "jti": true, "azp": true, "nonce": true, "email": true, "email_verified": true}
-	providerClaim := presetClaims[provider] != nil && presetClaims[provider][name]
-	dynamicClaim := provider == "oidc" || (provider == "github" && strings.HasPrefix(name, "repo_property_") && len(name) > len("repo_property_")) || (provider == "buildkite" && strings.HasPrefix(name, "agent_tag:") && len(name) > len("agent_tag:"))
-	if name == "" || len(name) > 256 || (!standard[name] && !providerClaim && !dynamicClaim) {
-		return fmt.Errorf("claim name %q is not allowed for provider %q", name, provider)
-	}
-	return nil
-}
-
-// ValidateTrustClaimName applies the configured issuer provider's trust claim allowlist.
-func ValidateTrustClaimName(name, provider string) error { return validateClaimName(name, provider) }
-
 // isTrustAlg accepts only asymmetric JWT signature algorithms.
 func isTrustAlg(alg string) bool { _, ok := supportedSigningAlgorithms[alg]; return ok }
 
 // compileTrustSchema safely compiles one bounded effective object schema.
 func compileTrustSchema(claims, required map[string]json.RawMessage) (*jsonschema.Schema, error) {
-	_, schema, err := CompileTrustSchema(claims, required)
+	_, schema, err := trustpolicy.CompileSchema(claims, required)
 	return schema, err
-}
-
-// BuildTrustSchema canonicalizes and validates an effective trust schema without compiling it.
-func BuildTrustSchema(claims, required map[string]json.RawMessage) ([]byte, error) {
-	properties, names := map[string]any{}, []any{}
-	for name, raw := range claims {
-		if name == "" || len(name) > 256 {
-			return nil, fmt.Errorf("claim name %q is invalid", name)
-		}
-		var value any
-		if err := decodeFragment(raw, &value); err != nil {
-			return nil, fmt.Errorf("claim %q: %w", name, err)
-		}
-		properties[name] = value
-		names = append(names, name)
-	}
-	for name, raw := range required {
-		if name == "" || len(name) > 256 {
-			return nil, fmt.Errorf("required claim name %q is invalid", name)
-		}
-		var value any
-		if err := decodeFragment(raw, &value); err != nil {
-			return nil, fmt.Errorf("required claim %q: %w", name, err)
-		}
-		if existing, ok := properties[name]; ok {
-			properties[name] = map[string]any{"allOf": []any{value, existing}}
-		} else {
-			properties[name] = value
-			names = append(names, name)
-		}
-	}
-	sort.Slice(names, func(i, j int) bool { return names[i].(string) < names[j].(string) })
-	doc := map[string]any{"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "required": names, "properties": properties}
-	data, _ := json.Marshal(doc)
-	if len(data) > 64<<10 || len(names) > 64 {
-		return nil, fmt.Errorf("effective schema exceeds safe limits")
-	}
-	return data, nil
-}
-
-// CompileCanonicalTrustSchema compiles canonical bytes returned by BuildTrustSchema.
-func CompileCanonicalTrustSchema(data []byte) (*jsonschema.Schema, error) {
-	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
-	if err != nil {
-		return nil, fmt.Errorf("decode canonical trust schema: %w", err)
-	}
-	c := jsonschema.NewCompiler()
-	c.DefaultDraft(jsonschema.Draft2020)
-	c.UseLoader(denySchemaLoader{})
-	if err := c.AddResource("urn:truster:binding", doc); err != nil {
-		return nil, err
-	}
-	return c.Compile("urn:truster:binding")
-}
-
-// CompileTrustSchema canonicalizes and compiles an effective trust schema using static policy safety semantics.
-func CompileTrustSchema(claims, required map[string]json.RawMessage) ([]byte, *jsonschema.Schema, error) {
-	data, err := BuildTrustSchema(claims, required)
-	if err != nil {
-		return nil, nil, err
-	}
-	schema, err := CompileCanonicalTrustSchema(data)
-	return data, schema, err
-}
-
-// decodeFragment rejects dangerous features and structurally oversized fragments.
-func decodeFragment(raw json.RawMessage, value *any) error {
-	if len(raw) == 0 || len(raw) > 16<<10 {
-		return fmt.Errorf("schema fragment is empty or too large")
-	}
-	d := json.NewDecoder(strings.NewReader(string(raw)))
-	d.UseNumber()
-	if err := d.Decode(value); err != nil {
-		return err
-	}
-	return inspectSchema(*value, 0)
-}
-
-// inspectSchema bounds depth/composition and rejects references, vocabularies, and content processing.
-func inspectSchema(v any, depth int) error {
-	if depth > 16 {
-		return fmt.Errorf("schema exceeds maximum depth")
-	}
-	switch x := v.(type) {
-	case map[string]any:
-		if len(x) > 64 {
-			return fmt.Errorf("schema object too large")
-		}
-		for k, val := range x {
-			if k == "$schema" || k == "$id" || k == "$anchor" || k == "$dynamicAnchor" || k == "$ref" || k == "$dynamicRef" || k == "$recursiveRef" || k == "$vocabulary" || strings.HasPrefix(k, "content") {
-				return fmt.Errorf("prohibited schema keyword %q", k)
-			}
-			if err := inspectSchema(val, depth+1); err != nil {
-				return err
-			}
-		}
-	case []any:
-		if len(x) > 32 {
-			return fmt.Errorf("schema composition or collection too large")
-		}
-		for _, val := range x {
-			if err := inspectSchema(val, depth+1); err != nil {
-				return err
-			}
-		}
-	case string:
-		if len(x) > 4096 {
-			return fmt.Errorf("schema string too long")
-		}
-	}
-	return nil
 }

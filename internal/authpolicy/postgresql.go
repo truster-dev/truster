@@ -26,6 +26,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/truster-dev/truster/v2/internal/config"
+	"github.com/truster-dev/truster/v2/trustpolicy"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -385,7 +386,7 @@ func newPostgreSQL(cfg config.PolicyDatabaseConfig, issuers map[string]config.Tr
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &PostgreSQL{cfg: cfg, issuers: known, query: query, close: closeFn, logger: logger, clients: map[string]*list.Element{}, clientLRU: list.New(), schemas: map[string]*list.Element{}, schemaLRU: list.New(), now: time.Now, compile: config.CompileCanonicalTrustSchema}
+	return &PostgreSQL{cfg: cfg, issuers: known, query: query, close: closeFn, logger: logger, clients: map[string]*list.Element{}, clientLRU: list.New(), schemas: map[string]*list.Element{}, schemaLRU: list.New(), now: time.Now, compile: trustpolicy.CompileCanonicalSchema}
 }
 
 // Close closes the dedicated PostgreSQL pool.
@@ -533,16 +534,16 @@ func (r *PostgreSQL) CompileBindings(clientID, issuerID string, rows []DynamicTr
 			claims[k] = v
 		}
 		for name := range claims {
-			if err := config.ValidateTrustClaimName(name, issuer.Provider); err != nil {
+			if err := trustpolicy.ValidateClaimName(name, issuer.Provider); err != nil {
 				return nil, indeterminate(err)
 			}
 		}
 		for name := range row.RequiredClaims {
-			if err := config.ValidateTrustClaimName(name, issuer.Provider); err != nil {
+			if err := trustpolicy.ValidateClaimName(name, issuer.Provider); err != nil {
 				return nil, indeterminate(err)
 			}
 		}
-		canonical, err := config.BuildTrustSchema(claims, row.RequiredClaims)
+		canonical, err := trustpolicy.BuildSchema(claims, row.RequiredClaims)
 		if err != nil {
 			return nil, indeterminate(fmt.Errorf("build dynamic trust schema: %w", err))
 		}

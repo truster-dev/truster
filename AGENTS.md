@@ -75,7 +75,7 @@ make check          # Run fmt, lint, and test
 
 ## Generated Files
 
-The repository does not currently commit generated source files. Go module sums are maintained by Go module commands and must remain committed. Build output, image binaries, the staged image CA bundle, coverage, and temporary SQLite data belong under ignored paths and are removed by `make clean`.
+The trust policy schema bundle under `schema/v2/` is generated from the runtime rules with `make schemas` and must remain committed. `make precommit` checks that it is current. Go module sums are maintained by Go module commands and must remain committed. Build output, image binaries, the staged image CA bundle, coverage, and temporary SQLite data belong under ignored paths and are removed by `make clean`.
 
 ## Code Conventions
 

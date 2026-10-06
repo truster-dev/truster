@@ -50,7 +50,7 @@ jobs:
         with:
           version: v3.18.5
 
-      - name: Check formatting and lint
+      - name: Check generated files, formatting, and lint
         run: make precommit
 
       - name: Validate Helm chart

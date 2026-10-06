@@ -97,6 +97,38 @@ Binding `subject` and `groups` replace the corresponding policy values when set.
 The effective subject must start with `trusted:`, groups must be non-empty, and
 exactly one binding must match a token.
 
+In production, prefer immutable organization, repository, and pipeline IDs; constrain
+the approved workflow or step; and assign a dedicated least-privilege Kubernetes group.
+
+### Trust policy schema
+
+Applications that provide a trust-policy editor can use the generated
+[trust policy schema bundle](https://truster.dev/schema/v2/trust-policy.schema.json)
+to check a `claims` or `required_claims` object before sending it to Truster,
+or a configured trust policy database.
+
+The allowed claim names depend on the provider configured for the selected
+issuer, so the application must first resolve that issuer and then validate
+against the matching definition:
+
+- `#/$defs/github` for a GitHub issuer;
+- `#/$defs/buildkite` for a Buildkite issuer; or
+- `#/$defs/oidc` for a custom OIDC issuer.
+
+Do not validate a claims object against the top-level bundle. It deliberately
+rejects every value because the claims object alone does not say which provider
+issued the token. Requiring callers to select a provider definition prevents a
+policy from accidentally being checked against the wrong claim vocabulary.
+
+The selected definition checks that claim names are supported, each claim value
+is valid JSON Schema, and the policy stays within Truster's structural safety
+limits. This provides useful feedback while a policy is being edited, but it
+does not replace Truster's own validation. Truster still enforces encoded size
+limits, combines `required_claims`, policy `claims`, and binding `claims`, and
+compiles the final effective policy before accepting the configuration.
+
+### Checking a token
+
 You can check a token against the configured trust policies with:
 
 ```sh
@@ -107,9 +139,6 @@ truster check trust \
 ```
 
 Use `--token-file -` to read from standard input.
-
-In production, prefer immutable organization, repository, and pipeline IDs; constrain
-the approved workflow or step; and assign a dedicated least-privilege Kubernetes group.
 
 ## Deployment modules
 

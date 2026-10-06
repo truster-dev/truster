@@ -38,7 +38,7 @@ LDFLAGS := -X $(BUILDVARS_PKG).buildVersion=$(BUILD_VERSION) \
            -X $(BUILDVARS_PKG).commitDate=$(COMMIT_DATE) \
            -X $(BUILDVARS_PKG).commitBranch=$(COMMIT_BRANCH)
 
-.PHONY: help setup fmt lint precommit test test-postgresql e2e check build image helm-lint helm-validate dev clean tag
+.PHONY: help setup schemas check-schemas fmt lint precommit test test-postgresql e2e check build image helm-lint helm-validate dev clean tag
 
 help: ## Show available targets
 	@echo "Usage: make <target>"
@@ -57,6 +57,12 @@ setup: ## Verify required tools and install git hooks
 	@chmod +x .git/hooks/commit-msg
 	@echo "Setup complete. Git hooks installed."
 
+schemas: ## Generate committed schemas
+	go run ./scripts/generate-trust-policy-schema
+
+check-schemas: ## Check that committed schemas are current
+	go run ./scripts/generate-trust-policy-schema -check
+
 fmt: ## Format Go source files
 	@echo "Formatting code..."
 	go fmt ./...
@@ -68,6 +74,8 @@ lint: ## Run golangci-lint
 precommit: ## Check modules, formatting, and linters (read-only)
 	@echo "Checking module files..."
 	@go mod tidy -diff
+	@echo "Checking generated files..."
+	@$(MAKE) check-schemas
 	@echo "Checking formatting..."
 	@UNFORMATTED=$$(gofmt -l . 2>&1); \
 	if [ -n "$$UNFORMATTED" ]; then \
