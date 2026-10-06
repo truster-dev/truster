@@ -47,7 +47,7 @@ help: ## Show available targets
 setup: ## Verify required tools and install git hooks
 	@command -v go >/dev/null 2>&1 || { echo "go is required but not installed"; exit 1; }
 	@command -v cc >/dev/null 2>&1 || { echo "a C compiler is required but not installed"; exit 1; }
-	@go tool golangci-lint version >/dev/null 2>&1 || { echo "golangci-lint is required as a Go tool"; exit 1; }
+	@GOLANGCI_LINT=$$(GOFLAGS=-modfile=tools/go.mod go tool -n golangci-lint) && "$${GOLANGCI_LINT}" version >/dev/null 2>&1 || { echo "golangci-lint is required as a Go tool"; exit 1; }
 	@echo "All required tools are installed."
 	@echo "Installing git hooks..."
 	@mkdir -p .git/hooks
@@ -69,11 +69,12 @@ fmt: ## Format Go source files
 
 lint: ## Run golangci-lint
 	@echo "Running linter..."
-	go tool golangci-lint run
+	@GOLANGCI_LINT=$$(GOFLAGS=-modfile=tools/go.mod go tool -n golangci-lint) && "$${GOLANGCI_LINT}" run
 
 precommit: ## Check modules, formatting, and linters (read-only)
 	@echo "Checking module files..."
 	@go mod tidy -diff
+	@go -C tools mod tidy -diff
 	@echo "Checking generated files..."
 	@$(MAKE) check-schemas
 	@echo "Checking formatting..."
