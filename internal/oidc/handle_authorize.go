@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/truster-dev/truster/v2/internal/authpolicy"
-	"github.com/truster-dev/truster/v2/internal/statedb"
-	"github.com/truster-dev/truster/v2/internal/templates"
+	"github.com/truster-dev/truster/v3/internal/authpolicy"
+	"github.com/truster-dev/truster/v3/internal/statedb"
+	"github.com/truster-dev/truster/v3/internal/templates"
 )
 
 // oauthAuthorizationError identifies an OAuth authorization endpoint error code.

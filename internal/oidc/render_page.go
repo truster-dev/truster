@@ -8,7 +8,7 @@ import (
 	"bytes"
 	"net/http"
 
-	"github.com/truster-dev/truster/v2/internal/templates"
+	"github.com/truster-dev/truster/v3/internal/templates"
 )
 
 // pageData returns the common, non-sensitive context exposed to browser templates.

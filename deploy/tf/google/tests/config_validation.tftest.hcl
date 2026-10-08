@@ -54,6 +54,149 @@ run "valid_cross_field_configuration" {
   command = plan
 }
 
+run "policy_queries_omitted_use_defaults" {
+  command = plan
+
+  variables {
+    truster_config = merge(var.truster_config, {
+      policy_database = {
+        driver                   = "postgresql"
+        connection_string_secret = "projects/my-project/secrets/policy-database/versions/latest"
+        redirect_uris            = ["https://app.example/callback"]
+      }
+    })
+  }
+
+  assert {
+    condition     = !contains(keys(jsondecode(local.config_jsonc).policy_database), "queries")
+    error_message = "Omitted queries must remain absent so Truster uses built-in SQL."
+  }
+}
+
+run "policy_queries_partial_overrides_preserve_sql" {
+  command = plan
+
+  variables {
+    truster_config = merge(var.truster_config, {
+      policy_database = {
+        driver                   = "postgresql"
+        connection_string_secret = "projects/my-project/secrets/policy-database/versions/latest"
+        redirect_uris            = ["https://app.example/callback"]
+        queries = {
+          client_exists = " SELECT 1 "
+          trust_issuer  = "SELECT issuer FROM custom_issuer WHERE issuer = $1"
+        }
+      }
+    })
+  }
+
+  assert {
+    condition = jsondecode(local.config_jsonc).policy_database.queries == {
+      client_exists = " SELECT 1 "
+      trust_issuer  = "SELECT issuer FROM custom_issuer WHERE issuer = $1"
+    }
+    error_message = "Partial query overrides must preserve SQL, including trust_issuer, without adding omitted keys."
+  }
+}
+
+run "policy_queries_null_disables_lookup" {
+  command = plan
+
+  variables {
+    truster_config = merge(var.truster_config, {
+      policy_database = {
+        driver                   = "postgresql"
+        connection_string_secret = "projects/my-project/secrets/policy-database/versions/latest"
+        redirect_uris            = ["https://app.example/callback"]
+        queries = {
+          client_exists  = null
+          user_access    = null
+          trust_issuer   = null
+          trust_bindings = null
+        }
+      }
+    })
+  }
+
+  assert {
+    condition = jsondecode(local.config_jsonc).policy_database.queries == {
+      client_exists  = null
+      user_access    = null
+      trust_issuer   = null
+      trust_bindings = null
+    }
+    error_message = "Explicit null must survive serialization for each supported query."
+  }
+}
+
+run "policy_queries_unknown_key_is_invalid" {
+  command = plan
+
+  variables {
+    truster_config = merge(var.truster_config, {
+      policy_database = {
+        driver                   = "postgresql"
+        connection_string_secret = "projects/my-project/secrets/policy-database/versions/latest"
+        redirect_uris            = ["https://app.example/callback"]
+        queries                  = { unknown = "SELECT 1" }
+      }
+    })
+  }
+
+  expect_failures = [var.truster_config]
+}
+
+run "policy_queries_unknown_null_key_is_invalid" {
+  command = plan
+
+  variables {
+    truster_config = merge(var.truster_config, {
+      policy_database = {
+        driver                   = "postgresql"
+        connection_string_secret = "projects/my-project/secrets/policy-database/versions/latest"
+        redirect_uris            = ["https://app.example/callback"]
+        queries                  = { unknown = null }
+      }
+    })
+  }
+
+  expect_failures = [var.truster_config]
+}
+
+run "policy_queries_empty_sql_is_invalid" {
+  command = plan
+
+  variables {
+    truster_config = merge(var.truster_config, {
+      policy_database = {
+        driver                   = "postgresql"
+        connection_string_secret = "projects/my-project/secrets/policy-database/versions/latest"
+        redirect_uris            = ["https://app.example/callback"]
+        queries                  = { user_access = "" }
+      }
+    })
+  }
+
+  expect_failures = [var.truster_config]
+}
+
+run "policy_queries_whitespace_sql_is_invalid" {
+  command = plan
+
+  variables {
+    truster_config = merge(var.truster_config, {
+      policy_database = {
+        driver                   = "postgresql"
+        connection_string_secret = "projects/my-project/secrets/policy-database/versions/latest"
+        redirect_uris            = ["https://app.example/callback"]
+        queries                  = { trust_issuer = " \t\n " }
+      }
+    })
+  }
+
+  expect_failures = [var.truster_config]
+}
+
 run "custom_oidc_port_reaches_caddy" {
   command = plan
 

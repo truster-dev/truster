@@ -62,7 +62,7 @@ The application configuration uses Secret Manager **version names**, such as
 
 ## Usage
 
-The typed `truster_config` value models the [Truster v2 application configuration](https://truster.dev/docs/config/) so type and supported cross-field errors fail during planning. Omit optional application settings to use Truster's own defaults. The module overrides `issuer_url`, `http_listen_addr`, and `secrets.provider`; the provider is always `google-secret-manager`. The `$schema` editor hint and `serving_certificate` are deployment-owned and intentionally omitted: generated configuration is served through Caddy, which owns TLS. The module also supplies the deployment's SQLite state path when `state_database` or its SQLite `path` is omitted. An explicit PostgreSQL state database is preserved. By default, the module grants the instance service account access only to runtime secrets referenced by the configuration.
+The typed `truster_config` value models the [Truster v3 application configuration](https://truster.dev/docs/config/) so type and supported cross-field errors fail during planning. Omit optional application settings to use Truster's own defaults. The module overrides `issuer_url`, `http_listen_addr`, and `secrets.provider`; the provider is always `google-secret-manager`. The `$schema` editor hint and `serving_certificate` are deployment-owned and intentionally omitted: generated configuration is served through Caddy, which owns TLS. The module also supplies the deployment's SQLite state path when `state_database` or its SQLite `path` is omitted. An explicit PostgreSQL state database is preserved. By default, the module grants the instance service account access only to runtime secrets referenced by the configuration.
 
 By default, the migration-only
 `state_database.migrations.connection_string_secret` is not granted to the
@@ -220,7 +220,7 @@ This table is the complete module input reference.
 | `subnetwork` | Subnetwork name, self-link, or ID; one is created when omitted | `string` | `null` | no |
 | `subnetwork_cidr` | IPv4 CIDR for the created subnetwork | `string` | `"10.0.0.0/24"` | no |
 | `oidc_addr` | Public OIDC server address, optionally including a port | `string` | — | yes |
-| `truster_config` | Typed Truster v2 configuration object; deployment-owned fields are overridden | `object` | — | yes |
+| `truster_config` | Typed Truster v3 configuration object; deployment-owned fields are overridden | `object` | — | yes |
 | `run_db_migrations` | Run migrations before every service start and grant access to the configured migration secret | `bool` | `false` | no |
 | `enable_ipv4` | Enable a public IPv4 address | `bool` | `true` | no |
 | `enable_ipv6` | Enable a public IPv6 address | `bool` | `true` | no |

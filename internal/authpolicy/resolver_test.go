@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/truster-dev/truster/v2/internal/config"
+	"github.com/truster-dev/truster/v3/internal/config"
 )
 
 // TestResolverStaticPrecedenceAndPolicyDatabaseDefaults verifies deterministic client ownership and effective policy.

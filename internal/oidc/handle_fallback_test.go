@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/truster-dev/truster/v2/internal/config"
-	"github.com/truster-dev/truster/v2/internal/templates"
+	"github.com/truster-dev/truster/v3/internal/config"
+	"github.com/truster-dev/truster/v3/internal/templates"
 )
 
 // TestHandleFallbackRedirectsRootAndRendersNotFound verifies root and unmatched-route behavior.

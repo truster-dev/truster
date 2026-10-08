@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 {
-  "$schema": "https://truster.dev/schema/v2/config.schema.json",
+  "$schema": "https://truster.dev/schema/v3/config.schema.json",
 
   // Local email authentication with Mailpit. See DEV.md for setup instructions.
   "issuer_url": "http://localhost:8080",

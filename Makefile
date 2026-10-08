@@ -11,7 +11,7 @@ COMMIT_HASH := $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
 COMMIT_DATE := $(shell TZ=UTC git log -1 --format=%cd --date=format-local:'%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo unknown)
 COMMIT_BRANCH := $(shell branch=$$(git symbolic-ref --short -q HEAD); if [ -n "$$branch" ]; then echo "$$branch"; else echo unknown; fi)
 
-BUILDVARS_PKG := github.com/truster-dev/truster/v2/internal/buildvars
+BUILDVARS_PKG := github.com/truster-dev/truster/v3/internal/buildvars
 
 BINARY_DIR := bin
 OCIMAGE ?= ocimage

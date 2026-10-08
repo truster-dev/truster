@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/truster-dev/truster/v2/internal/authpolicy"
-	"github.com/truster-dev/truster/v2/internal/statedb"
-	"github.com/truster-dev/truster/v2/internal/upstream"
+	"github.com/truster-dev/truster/v3/internal/authpolicy"
+	"github.com/truster-dev/truster/v3/internal/statedb"
+	"github.com/truster-dev/truster/v3/internal/upstream"
 )
 
 // HandleCallback handles an OAuth callback and selects or accepts an upstream email.

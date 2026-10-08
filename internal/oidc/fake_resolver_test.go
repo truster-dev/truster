@@ -8,8 +8,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/truster-dev/truster/v2/internal/authpolicy"
-	"github.com/truster-dev/truster/v2/internal/config"
+	"github.com/truster-dev/truster/v3/internal/authpolicy"
+	"github.com/truster-dev/truster/v3/internal/config"
 )
 
 // fakePolicyResolver is a controllable policy decision seam.

@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/truster-dev/truster/v2/internal/statedb"
-	"github.com/truster-dev/truster/v2/internal/templates"
-	"github.com/truster-dev/truster/v2/internal/upstream"
+	"github.com/truster-dev/truster/v3/internal/statedb"
+	"github.com/truster-dev/truster/v3/internal/templates"
+	"github.com/truster-dev/truster/v3/internal/upstream"
 )
 
 // renderIdentitySelection renders all authenticated upstream email candidates.

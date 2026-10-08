@@ -20,8 +20,8 @@ import (
 	"github.com/lestrrat-go/jwx/v2/jwk"
 	"github.com/lestrrat-go/jwx/v2/jws"
 	"github.com/lestrrat-go/jwx/v2/jwt"
-	"github.com/truster-dev/truster/v2/internal/authpolicy"
-	"github.com/truster-dev/truster/v2/internal/config"
+	"github.com/truster-dev/truster/v3/internal/authpolicy"
+	"github.com/truster-dev/truster/v3/internal/config"
 )
 
 // dynamicPolicyResolver supplies one database-style issuer and binding to the verifier.

@@ -20,7 +20,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
-	"github.com/truster-dev/truster/v2/internal/config"
+	"github.com/truster-dev/truster/v3/internal/config"
 )
 
 // TestPostgreSQLOperationLogs verifies final outcomes, cache state, malformed results, and subject redaction.

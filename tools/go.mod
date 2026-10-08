@@ -2,7 +2,7 @@
 // Copyright The Truster Authors
 // SPDX-License-Identifier: Apache-2.0
 
-module github.com/truster-dev/truster/v2/tools
+module github.com/truster-dev/truster/v3/tools
 
 go 1.26.2
 

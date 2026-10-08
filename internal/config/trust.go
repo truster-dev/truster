@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
-	"github.com/truster-dev/truster/v2/trustpolicy"
+	"github.com/truster-dev/truster/v3/trustpolicy"
 )
 
 const maxTrustBindings = 100

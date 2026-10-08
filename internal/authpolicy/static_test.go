@@ -9,7 +9,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/truster-dev/truster/v2/internal/config"
+	"github.com/truster-dev/truster/v3/internal/config"
 )
 
 // TestResolveStaticUser verifies group lookup, normalization, and requirements.

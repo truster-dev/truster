@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/truster-dev/truster/v2/internal/upstream"
+	"github.com/truster-dev/truster/v3/internal/upstream"
 )
 
 // TestIdentitySelectionExtendsActiveOAuthState verifies a late upstream callback gives the chooser its full lifetime.

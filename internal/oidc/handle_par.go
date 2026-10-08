@@ -14,10 +14,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/truster-dev/truster/v2/internal/authpolicy"
-	"github.com/truster-dev/truster/v2/internal/config"
-	"github.com/truster-dev/truster/v2/internal/dpop"
-	"github.com/truster-dev/truster/v2/internal/statedb"
+	"github.com/truster-dev/truster/v3/internal/authpolicy"
+	"github.com/truster-dev/truster/v3/internal/config"
+	"github.com/truster-dev/truster/v3/internal/dpop"
+	"github.com/truster-dev/truster/v3/internal/statedb"
 )
 
 const maxPARBody = 16 << 10

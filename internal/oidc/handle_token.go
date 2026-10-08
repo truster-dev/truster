@@ -7,18 +7,18 @@ package oidc
 import (
 	"encoding/json"
 	"errors"
-	"github.com/truster-dev/truster/v2/internal/authpolicy"
-	"github.com/truster-dev/truster/v2/internal/config"
-	"github.com/truster-dev/truster/v2/internal/dpop"
+	"github.com/truster-dev/truster/v3/internal/authpolicy"
+	"github.com/truster-dev/truster/v3/internal/config"
+	"github.com/truster-dev/truster/v3/internal/dpop"
 	"mime"
 	"net/http"
 	"time"
 
-	refreshdomain "github.com/truster-dev/truster/v2/internal/refresh"
-	"github.com/truster-dev/truster/v2/internal/statedb"
-	"github.com/truster-dev/truster/v2/internal/tokens"
-	"github.com/truster-dev/truster/v2/internal/trust"
-	"github.com/truster-dev/truster/v2/internal/upstream"
+	refreshdomain "github.com/truster-dev/truster/v3/internal/refresh"
+	"github.com/truster-dev/truster/v3/internal/statedb"
+	"github.com/truster-dev/truster/v3/internal/tokens"
+	"github.com/truster-dev/truster/v3/internal/trust"
+	"github.com/truster-dev/truster/v3/internal/upstream"
 )
 
 const (

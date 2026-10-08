@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 variable "truster_config" {
-  description = "Typed Truster v2 application configuration. The module injects deployment-owned settings."
+  description = "Typed Truster v3 application configuration. The module injects deployment-owned settings."
   type = object({
     signing_algorithm = optional(string)
     jwks_kid          = optional(string)
@@ -129,11 +129,7 @@ variable "truster_config" {
           offline_absolute_ttl = optional(string)
         }))
       }))
-      queries = optional(object({
-        client_exists  = optional(string)
-        user_access    = optional(string)
-        trust_bindings = optional(string)
-      }))
+      queries = optional(map(string))
       client_lookup_cache = optional(object({
         ttl          = optional(string)
         negative_ttl = optional(string)
@@ -275,6 +271,15 @@ variable "truster_config" {
       length(var.truster_config.policy_database.redirect_uris) > 0
     )
     error_message = "truster_config.policy_database requires the postgresql driver, a connection string secret, and at least one redirect URI."
+  }
+
+  validation {
+    condition = alltrue([
+      for key, sql in coalesce(try(var.truster_config.policy_database.queries, null), {}) :
+      contains(["client_exists", "user_access", "trust_issuer", "trust_bindings"], key) &&
+      (sql == null ? true : trimspace(sql) != "")
+    ])
+    error_message = "policy_database.queries supports only client_exists, user_access, trust_issuer, and trust_bindings; values must be null or nonblank SQL."
   }
 
   validation {

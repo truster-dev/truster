@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/truster-dev/truster/v2/internal/statedb"
+	"github.com/truster-dev/truster/v3/internal/statedb"
 )
 
 const authorizationStateTTL = 10 * time.Minute

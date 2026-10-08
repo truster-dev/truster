@@ -14,10 +14,10 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/truster-dev/truster/v2/internal/authpolicy"
-	"github.com/truster-dev/truster/v2/internal/config"
-	"github.com/truster-dev/truster/v2/internal/secrets"
-	"github.com/truster-dev/truster/v2/internal/trust"
+	"github.com/truster-dev/truster/v3/internal/authpolicy"
+	"github.com/truster-dev/truster/v3/internal/config"
+	"github.com/truster-dev/truster/v3/internal/secrets"
+	"github.com/truster-dev/truster/v3/internal/trust"
 )
 
 // newCheckTrustCmd creates the configured external token verifier and trust evaluator command.

@@ -36,7 +36,7 @@ aws ssm put-parameter \
 
 ## Usage
 
-The typed `truster_config` value models the current [Truster v2 application configuration](https://truster.dev/docs/config/) so type and supported cross-field errors fail during planning. The module overrides `issuer_url`, `http_listen_addr`, `secrets.provider`, and `secrets.aws_region`. The schema-editor-only `$schema` field and native `serving_certificate` field are intentionally omitted: this deployment generates the configuration and terminates TLS with Caddy. It also defaults the deployment's state database to SQLite at `/var/lib/truster/truster-state.db`, including when an explicit SQLite configuration omits `path`; explicit PostgreSQL configuration is preserved. The module derives least-privilege IAM resources from the runtime secret references in this object.
+The typed `truster_config` value models the current [Truster v3 application configuration](https://truster.dev/docs/config/) so type and supported cross-field errors fail during planning. The module overrides `issuer_url`, `http_listen_addr`, `secrets.provider`, and `secrets.aws_region`. The schema-editor-only `$schema` field and native `serving_certificate` field are intentionally omitted: this deployment generates the configuration and terminates TLS with Caddy. It also defaults the deployment's state database to SQLite at `/var/lib/truster/truster-state.db`, including when an explicit SQLite configuration omits `path`; explicit PostgreSQL configuration is preserved. The module derives least-privilege IAM resources from the runtime secret references in this object.
 
 By default, the migration-only
 `state_database.migrations.connection_string_secret` is not granted to the
@@ -132,7 +132,7 @@ This table is the complete module input reference.
 |------|-------------|------|---------|----------|
 | `vpc_id` | VPC ID where Truster is deployed. | `string` | n/a | yes |
 | `oidc_addr` | Public OIDC server address, such as `auth.example.com` or `auth.example.com:8443`. | `string` | n/a | yes |
-| `truster_config` | Typed Truster v2 application configuration. Put application-owned settings here; deployment-owned fields are overridden as described above. | `object` | n/a | yes |
+| `truster_config` | Typed Truster v3 application configuration. Put application-owned settings here; deployment-owned fields are overridden as described above. | `object` | n/a | yes |
 | `run_db_migrations` | Run migrations before every service start and grant access to the configured migration secret. | `bool` | `false` | no |
 | `secrets_provider` | AWS secrets backend: `aws-parameter-store` or `aws-secrets-manager`. | `string` | `"aws-parameter-store"` | no |
 | `name_prefix` | Prefix for resource names. | `string` | `"truster"` | no |

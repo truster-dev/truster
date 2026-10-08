@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/lestrrat-go/jwx/v2/jwt"
-	"github.com/truster-dev/truster/v2/internal/config"
-	"github.com/truster-dev/truster/v2/internal/dpop"
-	"github.com/truster-dev/truster/v2/internal/tokens"
+	"github.com/truster-dev/truster/v3/internal/config"
+	"github.com/truster-dev/truster/v3/internal/dpop"
+	"github.com/truster-dev/truster/v3/internal/tokens"
 )
 
 // accessAuthError is a bounded protected-resource authentication failure.

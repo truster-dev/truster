@@ -8,7 +8,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/truster-dev/truster/v2/internal/buildvars"
+	"github.com/truster-dev/truster/v3/internal/buildvars"
 )
 
 // NewRootCmd creates the Truster command hierarchy.

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/truster-dev/truster/v2/trustpolicy"
+	"github.com/truster-dev/truster/v3/trustpolicy"
 )
 
 // TestCompileTrustSchemaInheritance verifies ordinary overrides remain composed with required policy claims.

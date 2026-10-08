@@ -17,7 +17,7 @@ field documentation:
 
 ```jsonc
 {
-  "$schema": "https://truster.dev/schema/v2/config.schema.json",
+  "$schema": "https://truster.dev/schema/v3/config.schema.json",
   // ...
 }
 ```
@@ -131,6 +131,10 @@ limits. This provides useful feedback while a policy is being edited, but it
 does not replace Truster's own validation. Truster still enforces encoded size
 limits, combines `required_claims`, policy `claims`, and binding `claims`, and
 compiles the final effective policy before accepting the configuration.
+
+Go applications can use `github.com/truster-dev/truster/v3/trustpolicy` to
+generate this schema and validate policies with the same rules as Truster.
+The trust-policy schema remains at its v2 URL because its format has not changed.
 
 ### Checking a token
 

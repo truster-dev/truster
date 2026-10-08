@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 {
-  "$schema": "https://truster.dev/schema/v2/config.schema.json",
+  "$schema": "https://truster.dev/schema/v3/config.schema.json",
 
   // Core settings
   "issuer_url": "https://auth.example.com",

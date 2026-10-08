@@ -30,11 +30,11 @@ builds:
           - CC=aarch64-linux-gnu-gcc
     ldflags:
       - -s -w
-      - -X github.com/truster-dev/truster/v2/internal/buildvars.buildVersion={{ .Tag }}
-      - -X github.com/truster-dev/truster/v2/internal/buildvars.buildDate={{ .Date }}
-      - -X github.com/truster-dev/truster/v2/internal/buildvars.commitHash={{ .FullCommit }}
-      - -X github.com/truster-dev/truster/v2/internal/buildvars.commitDate={{ .Env.COMMIT_DATE }}
-      - -X github.com/truster-dev/truster/v2/internal/buildvars.commitBranch=unknown
+      - -X github.com/truster-dev/truster/v3/internal/buildvars.buildVersion={{ .Tag }}
+      - -X github.com/truster-dev/truster/v3/internal/buildvars.buildDate={{ .Date }}
+      - -X github.com/truster-dev/truster/v3/internal/buildvars.commitHash={{ .FullCommit }}
+      - -X github.com/truster-dev/truster/v3/internal/buildvars.commitDate={{ .Env.COMMIT_DATE }}
+      - -X github.com/truster-dev/truster/v3/internal/buildvars.commitBranch=unknown
     mod_timestamp: "{{ .CommitTimestamp }}"
 
 archives:

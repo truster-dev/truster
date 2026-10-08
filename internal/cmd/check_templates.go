@@ -8,8 +8,8 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/truster-dev/truster/v2/internal/config"
-	"github.com/truster-dev/truster/v2/internal/templates"
+	"github.com/truster-dev/truster/v3/internal/config"
+	"github.com/truster-dev/truster/v3/internal/templates"
 )
 
 // newCheckTemplatesCmd constructs the configured template validation command.

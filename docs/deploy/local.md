@@ -73,7 +73,7 @@ Save this configuration as `.truster-local/config.jsonc`:
 
 ```jsonc
 {
-  "$schema": "https://truster.dev/schema/v2/config.schema.json",
+  "$schema": "https://truster.dev/schema/v3/config.schema.json",
   "issuer_url": "http://localhost:8080",
   "http_listen_addr": "127.0.0.1:8080",
 

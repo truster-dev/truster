@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/truster-dev/truster/v2/internal/config"
-	"github.com/truster-dev/truster/v2/internal/statedb"
-	"github.com/truster-dev/truster/v2/internal/templates"
+	"github.com/truster-dev/truster/v3/internal/config"
+	"github.com/truster-dev/truster/v3/internal/statedb"
+	"github.com/truster-dev/truster/v3/internal/templates"
 )
 
 // grantsServer creates a grant-management handler with real storage and templates.

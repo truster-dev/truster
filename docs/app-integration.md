@@ -77,7 +77,7 @@ connector settings described in [Configuration](/docs/config/):
 
 ```jsonc
 {
-  "$schema": "https://truster.dev/schema/v2/config.schema.json",
+  "$schema": "https://truster.dev/schema/v3/config.schema.json",
   "static_policy": {
     "clients": {
       "example-web": {

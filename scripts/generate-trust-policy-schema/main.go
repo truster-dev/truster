@@ -12,7 +12,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/truster-dev/truster/v2/trustpolicy"
+	"github.com/truster-dev/truster/v3/trustpolicy"
 )
 
 const schemaPath = "trust-policy.schema.json"

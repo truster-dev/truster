@@ -17,9 +17,9 @@ import (
 	"github.com/tailscale/hujson"
 )
 
-const configSchemaID = "https://truster.dev/schema/v2/config.schema.json"
+const configSchemaID = "https://truster.dev/schema/v3/config.schema.json"
 
-// TestExampleConfigs validates every example against both the v2 JSON Schema
+// TestExampleConfigs validates every example against both the v3 JSON Schema
 // and the application's authoritative configuration loader.
 func TestExampleConfigs(t *testing.T) {
 	compiledSchema := compileConfigSchema(t)
@@ -40,6 +40,9 @@ func TestExampleConfigs(t *testing.T) {
 				t.Fatalf("read example: %v", readErr)
 			}
 			instance := parseJSONCInstance(t, data)
+			if got := instance.(map[string]any)["$schema"]; got != configSchemaID {
+				t.Errorf("example schema = %v, want %s", got, configSchemaID)
+			}
 			if validateErr := compiledSchema.Validate(instance); validateErr != nil {
 				t.Errorf("schema validation failed: %v", validateErr)
 			}
@@ -456,7 +459,7 @@ func TestPolicyDatabaseSchemaAndLoaderValidation(t *testing.T) {
 
 // TestPolicyDatabaseQueryDefaultsMatchSchema keeps the documented JSON Schema defaults synchronized with the loader.
 func TestPolicyDatabaseQueryDefaultsMatchSchema(t *testing.T) {
-	schemaPath := filepath.Join("..", "..", "schema", "v2", "config.schema.json")
+	schemaPath := filepath.Join("..", "..", "schema", "v3", "config.schema.json")
 	data, err := os.ReadFile(schemaPath)
 	if err != nil {
 		t.Fatalf("read schema: %v", err)
@@ -553,10 +556,10 @@ func TestStateDatabaseSchemaAndLoaderValidation(t *testing.T) {
 	}
 }
 
-// compileConfigSchema compiles the repository's v2 configuration schema.
+// compileConfigSchema compiles the repository's v3 configuration schema.
 func compileConfigSchema(t *testing.T) *jsonschema.Schema {
 	t.Helper()
-	schemaPath := filepath.Join("..", "..", "schema", "v2", "config.schema.json")
+	schemaPath := filepath.Join("..", "..", "schema", "v3", "config.schema.json")
 	schemaFile, err := os.Open(schemaPath)
 	if err != nil {
 		t.Fatalf("open schema: %v", err)
@@ -570,6 +573,9 @@ func compileConfigSchema(t *testing.T) *jsonschema.Schema {
 	schemaDocument, err := jsonschema.UnmarshalJSON(schemaFile)
 	if err != nil {
 		t.Fatalf("parse schema: %v", err)
+	}
+	if got := schemaDocument.(map[string]any)["$id"]; got != configSchemaID {
+		t.Fatalf("schema ID = %v, want %s", got, configSchemaID)
 	}
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()

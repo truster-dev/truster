@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/truster-dev/truster/v2/internal/authpolicy"
-	"github.com/truster-dev/truster/v2/internal/tokens"
+	"github.com/truster-dev/truster/v3/internal/authpolicy"
+	"github.com/truster-dev/truster/v3/internal/tokens"
 )
 
 // exchangeTrustedToken verifies an external ID token and issues one downstream ID token.

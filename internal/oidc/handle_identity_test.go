@@ -13,8 +13,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/truster-dev/truster/v2/internal/config"
-	"github.com/truster-dev/truster/v2/internal/upstream"
+	"github.com/truster-dev/truster/v3/internal/config"
+	"github.com/truster-dev/truster/v3/internal/upstream"
 )
 
 // TestIdentitySelectionRejectsTamperingAndReplay verifies exact, single-use email selection.

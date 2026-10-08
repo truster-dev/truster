@@ -124,7 +124,7 @@ locals {
       )
     },
     var.truster_config.policy_database.queries == null ? {} : {
-      queries = { for key, value in var.truster_config.policy_database.queries : key => value if value != null }
+      queries = var.truster_config.policy_database.queries
     },
     var.truster_config.policy_database.client_lookup_cache == null ? {} : {
       client_lookup_cache = { for key, value in var.truster_config.policy_database.client_lookup_cache : key => value if value != null }

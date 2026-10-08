@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/truster-dev/truster/v2/internal/config"
+	"github.com/truster-dev/truster/v3/internal/config"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/github"
 )

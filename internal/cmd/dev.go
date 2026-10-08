@@ -8,7 +8,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/truster-dev/truster/v2/internal/dev"
+	"github.com/truster-dev/truster/v3/internal/dev"
 )
 
 // newDevCmd constructs the template development command.

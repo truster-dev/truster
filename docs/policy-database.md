@@ -109,6 +109,11 @@ You can use the built-in schema without configuring any queries. To use tables
 from an existing application database, override one or more entries under
 `policy_database.queries`. Any omitted query continues to use its built-in value.
 
+For a database created with Truster v2, add the `trust_issuers` table from the
+current example schema, supply a custom `trust_issuer` query, or set
+`trust_issuer` to `null` if you do not need database-managed issuers. Truster v3
+prepares all enabled queries at startup, including their built-in defaults.
+
 Set an individual query to `null` to disable that lookup. Empty or whitespace-only
 SQL is invalid. Disabling a lookup denies the operation that needs it; it does
 not bypass authorization:

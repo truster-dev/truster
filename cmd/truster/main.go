@@ -7,7 +7,7 @@ package main
 import (
 	"os"
 
-	"github.com/truster-dev/truster/v2/internal/cmd"
+	"github.com/truster-dev/truster/v3/internal/cmd"
 )
 
 func main() {

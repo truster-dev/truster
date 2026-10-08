@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/truster-dev/truster/v2/internal/config"
+	"github.com/truster-dev/truster/v3/internal/config"
 )
 
 // HandleDiscovery handles the OIDC discovery endpoint (/.well-known/openid-configuration).

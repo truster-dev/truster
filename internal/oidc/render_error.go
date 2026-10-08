@@ -8,7 +8,7 @@ import (
 	"bytes"
 	"net/http"
 
-	"github.com/truster-dev/truster/v2/internal/templates"
+	"github.com/truster-dev/truster/v3/internal/templates"
 )
 
 // browserFailureReason identifies a browser flow failure without carrying user data.

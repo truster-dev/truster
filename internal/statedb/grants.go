@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/truster-dev/truster/v2/internal/upstream"
+	"github.com/truster-dev/truster/v3/internal/upstream"
 )
 
 const grantActionBatchSize = 5000

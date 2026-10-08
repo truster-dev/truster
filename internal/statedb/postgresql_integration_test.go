@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/truster-dev/truster/v2/internal/upstream"
+	"github.com/truster-dev/truster/v3/internal/upstream"
 )
 
 // postgreSQLStores opens two independent pools against the opt-in integration database.

@@ -8,7 +8,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/truster-dev/truster/v2/internal/config"
+	"github.com/truster-dev/truster/v3/internal/config"
 )
 
 // clientSource identifies the resolver-owned implementation for a client.

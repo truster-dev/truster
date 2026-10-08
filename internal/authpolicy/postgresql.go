@@ -26,8 +26,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
-	"github.com/truster-dev/truster/v2/internal/config"
-	"github.com/truster-dev/truster/v2/trustpolicy"
+	"github.com/truster-dev/truster/v3/internal/config"
+	"github.com/truster-dev/truster/v3/trustpolicy"
 	"golang.org/x/sync/singleflight"
 )
 

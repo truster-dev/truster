@@ -12,7 +12,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/truster-dev/truster/v2/internal/config"
+	"github.com/truster-dev/truster/v3/internal/config"
 )
 
 // BenchmarkCachedClientLookup measures the default hot client-existence path.
