@@ -22,6 +22,7 @@ import (
 const (
 	defaultClientExistsQuery  = `SELECT EXISTS (SELECT 1 FROM truster_policy.clients WHERE client_id = $1) AS exists`
 	defaultUserAccessQuery    = `SELECT users.subject IS NOT NULL AS allowed, COALESCE(users.groups, ARRAY[]::text[]) AS groups FROM (VALUES ($1::text, $2::text)) AS input(client_id, subject) LEFT JOIN truster_policy.users USING (client_id, subject)`
+	defaultTrustIssuerQuery   = `SELECT issuer_id, provider, issuer_url, signing_algs, max_token_age_seconds FROM truster_policy.trust_issuers WHERE client_id = $1 AND issuer_url = $2`
 	defaultTrustBindingsQuery = `SELECT client_id, issuer_id, binding_id, subject, required_claims, policy_claims, binding_claims, groups FROM truster_policy.trust_bindings WHERE client_id = $1 AND issuer_id = $2 ORDER BY binding_id`
 )
 
@@ -96,14 +97,8 @@ func Parse(data []byte) (*Config, error) {
 		cfg.StaticPolicy.Clients[id] = client
 	}
 	if policyDatabase := cfg.PolicyDatabase; policyDatabase != nil {
-		if strings.TrimSpace(policyDatabase.Queries.ClientExists) == "" {
-			policyDatabase.Queries.ClientExists = defaultClientExistsQuery
-		}
-		if strings.TrimSpace(policyDatabase.Queries.UserAccess) == "" {
-			policyDatabase.Queries.UserAccess = defaultUserAccessQuery
-		}
-		if strings.TrimSpace(policyDatabase.Queries.TrustBindings) == "" {
-			policyDatabase.Queries.TrustBindings = defaultTrustBindingsQuery
+		if err := applyPolicyQueryDefaults(data, &policyDatabase.Queries); err != nil {
+			return nil, fmt.Errorf("config validation failed: %w", err)
 		}
 		applyRefreshDefaults(&policyDatabase.ClientDefaults.RefreshTokens)
 		applyDPoPDefaults(&policyDatabase.ClientDefaults.DPoP)
@@ -154,6 +149,48 @@ func Parse(data []byte) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// applyPolicyQueryDefaults distinguishes omitted queries from explicit null disables.
+func applyPolicyQueryDefaults(data []byte, queries *PolicyQueries) error {
+	var document struct {
+		PolicyDatabase struct {
+			Queries json.RawMessage `json:"queries"`
+		} `json:"policy_database"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		return fmt.Errorf("decode policy queries: %w", err)
+	}
+	fields := map[string]json.RawMessage{}
+	if raw := document.PolicyDatabase.Queries; len(raw) != 0 {
+		var err error
+		fields, err = decodePolicyObject(raw, "policy_database.queries")
+		if err != nil {
+			return err
+		}
+	}
+	if err := validateCanonicalPolicyFields(fields, "policy_database.queries", "client_exists", "user_access", "trust_issuer", "trust_bindings"); err != nil {
+		return err
+	}
+	for name, query := range map[string]struct {
+		value    *string
+		fallback string
+	}{
+		"client_exists":  {&queries.ClientExists, defaultClientExistsQuery},
+		"user_access":    {&queries.UserAccess, defaultUserAccessQuery},
+		"trust_issuer":   {&queries.TrustIssuer, defaultTrustIssuerQuery},
+		"trust_bindings": {&queries.TrustBindings, defaultTrustBindingsQuery},
+	} {
+		raw, present := fields[name]
+		if !present {
+			*query.value = query.fallback
+		} else if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			*query.value = ""
+		} else if strings.TrimSpace(*query.value) == "" {
+			return fmt.Errorf("policy_database.queries.%s must be non-empty SQL or null", name)
+		}
+	}
+	return nil
 }
 
 // validatePolicyFields rejects explicit nulls that the configuration schema does not permit.

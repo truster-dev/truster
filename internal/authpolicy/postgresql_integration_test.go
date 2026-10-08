@@ -40,7 +40,7 @@ func TestPostgreSQLIntegration(t *testing.T) {
 	}
 	t.Cleanup(admin.Close)
 	schema := fmt.Sprintf("auth_test_%d", time.Now().UnixNano())
-	if _, err = admin.Exec(ctx, `CREATE SCHEMA `+schema+`; CREATE TABLE `+schema+`.clients(id text primary key); CREATE TABLE `+schema+`.users(client_id text, subject text, groups text[]); CREATE TABLE `+schema+`.trust(client_id text, issuer_id text, binding_id text, subject text, required_claims jsonb, policy_claims jsonb, binding_claims jsonb, groups text[]); INSERT INTO `+schema+`.clients VALUES ('client'); INSERT INTO `+schema+`.users VALUES ('client','user@example.com',ARRAY['b','a']); INSERT INTO `+schema+`.trust VALUES ('client','issuer','binding','trusted:subject','{}','{}','{"sequence":{"const":9007199254740993}}',ARRAY['group']);`); err != nil {
+	if _, err = admin.Exec(ctx, `CREATE SCHEMA `+schema+`; CREATE TABLE `+schema+`.clients(id text primary key); CREATE TABLE `+schema+`.users(client_id text, subject text, groups text[]); CREATE TABLE `+schema+`.issuers(client_id text, issuer_id text, provider text, issuer_url text, signing_algs text[], max_token_age_seconds bigint); CREATE TABLE `+schema+`.trust(client_id text, issuer_id text, binding_id text, subject text, required_claims jsonb, policy_claims jsonb, binding_claims jsonb, groups text[]); INSERT INTO `+schema+`.clients VALUES ('client'); INSERT INTO `+schema+`.users VALUES ('client','user@example.com',ARRAY['b','a']); INSERT INTO `+schema+`.issuers VALUES ('client','dynamic','oidc','https://issuer.example',ARRAY['RS256'],600); INSERT INTO `+schema+`.trust VALUES ('client','issuer','binding','trusted:subject','{}','{}','{"sequence":{"const":9007199254740993}}',ARRAY['group']);`); err != nil {
 		t.Fatal(err)
 	}
 	role := fmt.Sprintf("auth_reader_%d", time.Now().UnixNano())
@@ -79,7 +79,70 @@ func TestPostgreSQLIntegration(t *testing.T) {
 	cfg.Queries = config.PolicyQueries{
 		ClientExists:  `SELECT EXISTS(SELECT 1 FROM ` + schema + `.clients WHERE id=$1) AS exists`,
 		UserAccess:    `SELECT EXISTS(SELECT 1 FROM ` + schema + `.users WHERE client_id=$1 AND subject=$2) AS allowed, (SELECT groups FROM ` + schema + `.users WHERE client_id=$1 AND subject=$2) AS groups`,
+		TrustIssuer:   `SELECT issuer_id,provider,issuer_url,signing_algs,max_token_age_seconds FROM ` + schema + `.issuers WHERE client_id=$1 AND issuer_url=$2`,
 		TrustBindings: `SELECT client_id,issuer_id,binding_id,subject,required_claims,policy_claims,binding_claims,groups FROM ` + schema + `.trust WHERE client_id=$1 AND issuer_id=$2`,
+	}
+	t.Run("default queries", func(t *testing.T) {
+		defaultSchema := schema + "_defaults"
+		sql, readErr := os.ReadFile("../../examples/policy-db/postgresql.sql")
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		// Isolate the example tables without requiring ownership of the real
+		// truster_policy schema in the integration database.
+		if _, err := admin.Exec(ctx, strings.ReplaceAll(string(sql), "truster_policy", defaultSchema)); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _, _ = admin.Exec(context.Background(), `DROP SCHEMA `+defaultSchema+` CASCADE`) }()
+		if _, err := admin.Exec(ctx, `INSERT INTO `+defaultSchema+`.clients VALUES ('client'); INSERT INTO `+defaultSchema+`.users VALUES ('client','user@example.com',ARRAY['developers']); INSERT INTO `+defaultSchema+`.trust_issuers VALUES ('client','custom','oidc','https://issuer.example',ARRAY['RS256'],600); INSERT INTO `+defaultSchema+`.trust_bindings VALUES ('client','custom','build','trusted:build','{}','{}','{"tenant":{"const":"acme"}}',ARRAY['builders']);`); err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := config.Load("../../examples/config/config-policy-db.jsonc")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defaults := *loaded.PolicyDatabase
+		for _, query := range []*string{&defaults.Queries.ClientExists, &defaults.Queries.UserAccess, &defaults.Queries.TrustIssuer, &defaults.Queries.TrustBindings} {
+			*query = strings.ReplaceAll(*query, "truster_policy", defaultSchema)
+		}
+		resolver, err := NewPostgreSQL(ctx, directURL, defaults, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resolver.Close()
+		if exists, err := resolver.ClientExists(ctx, "client"); err != nil || !exists {
+			t.Fatalf("default client lookup exists=%v error=%v", exists, err)
+		}
+		if user, err := resolver.ResolveUser(ctx, "client", "USER@EXAMPLE.COM", true); err != nil || len(user.Groups) != 1 || user.Groups[0] != "developers" {
+			t.Fatalf("default user lookup user=%#v error=%v", user, err)
+		}
+		if _, err := resolver.ResolveUser(ctx, "client", "unknown@example.com", false); !errors.Is(err, ErrDenied) {
+			t.Fatalf("default unknown user error=%v, want denial", err)
+		}
+		id, issuer, err := resolver.ResolveTrustIssuer(ctx, "client", "https://issuer.example")
+		if err != nil || id != "custom" || issuer.MaxTokenAge.Duration() != 10*time.Minute {
+			t.Fatalf("default issuer id=%q config=%#v error=%v", id, issuer, err)
+		}
+		bindings, err := resolver.ResolveTrustBindings(ctx, "client", id, issuer)
+		if err != nil || len(bindings) != 1 || bindings[0].Subject != "trusted:build" || bindings[0].Groups[0] != "builders" {
+			t.Fatalf("default bindings=%#v error=%v", bindings, err)
+		}
+	})
+	for _, name := range []string{"client_exists", "user_access", "trust_issuer", "trust_bindings", "all"} {
+		t.Run("disabled "+name, func(t *testing.T) {
+			disabled := cfg
+			queries := map[string]*string{"client_exists": &disabled.Queries.ClientExists, "user_access": &disabled.Queries.UserAccess, "trust_issuer": &disabled.Queries.TrustIssuer, "trust_bindings": &disabled.Queries.TrustBindings}
+			if name == "all" {
+				disabled.Queries = config.PolicyQueries{}
+			} else {
+				*queries[name] = ""
+			}
+			resolver, err := NewPostgreSQL(ctx, restrictedURL, disabled, nil, nil)
+			if err != nil {
+				t.Fatalf("disabled-query startup: %v", err)
+			}
+			resolver.Close()
+		})
 	}
 	r, err := NewPostgreSQL(ctx, restrictedURL, cfg, map[string]config.TrustIssuerConfig{"issuer": {Provider: "oidc"}}, nil)
 	if err != nil {
@@ -92,7 +155,11 @@ func TestPostgreSQLIntegration(t *testing.T) {
 	if user, e := r.ResolveUser(ctx, "client", "USER@EXAMPLE.COM", true); e != nil || len(user.Groups) != 2 || user.Groups[0] != "a" {
 		t.Fatalf("user=%#v err=%v", user, e)
 	}
-	bindings, err := r.ResolveTrust(ctx, "client", "issuer")
+	issuerID, issuer, err := r.ResolveTrustIssuer(ctx, "client", "https://issuer.example")
+	if err != nil || issuerID != "dynamic" || issuer.MaxTokenAge.Duration() != 10*time.Minute {
+		t.Fatalf("issuer_id=%q issuer=%#v err=%v", issuerID, issuer, err)
+	}
+	bindings, err := r.ResolveTrustBindings(ctx, "client", "issuer", r.issuers["issuer"])
 	if err != nil || len(bindings) != 1 || bindings[0].Subject != "trusted:subject" {
 		t.Fatalf("bindings=%#v err=%v", bindings, err)
 	}
@@ -102,8 +169,62 @@ func TestPostgreSQLIntegration(t *testing.T) {
 	if _, err = admin.Exec(ctx, `DELETE FROM `+schema+`.trust WHERE binding_id='binding'`); err != nil {
 		t.Fatal(err)
 	}
-	if bindings, err = r.ResolveTrust(ctx, "client", "issuer"); err != nil || len(bindings) != 0 {
+	if bindings, err = r.ResolveTrustBindings(ctx, "client", "issuer", r.issuers["issuer"]); err != nil || len(bindings) != 0 {
 		t.Fatalf("removed binding was retained: bindings=%#v error=%v", bindings, err)
+	}
+	if _, err = admin.Exec(ctx, `INSERT INTO `+schema+`.trust VALUES ('client','dynamic','binding','trusted:dynamic','{}','{}','{"tenant":{"const":"acme"}}',ARRAY['builders'])`); err != nil {
+		t.Fatal(err)
+	}
+	resolver := NewResolver(&config.Config{PolicyDatabase: &cfg}, r)
+	client, err := resolver.ResolveClient(ctx, "client", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedIssuer, err := resolver.ResolveTrustIssuer(ctx, client, "https://issuer.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	effective, err := resolver.ResolveTrustBindings(ctx, client, resolvedIssuer)
+	if err != nil || len(effective) != 1 || effective[0].Subject != "trusted:dynamic" || effective[0].Groups[0] != "builders" {
+		t.Fatalf("effective bindings=%#v error=%v", effective, err)
+	}
+	if err = effective[0].Schema.Validate(map[string]any{"tenant": "acme"}); err != nil {
+		t.Fatalf("matching tenant rejected: %v", err)
+	}
+	if err = effective[0].Schema.Validate(map[string]any{"tenant": "other"}); err == nil {
+		t.Fatal("unapproved tenant accepted")
+	}
+	if _, err = admin.Exec(ctx, `UPDATE `+schema+`.issuers SET max_token_age_seconds=120, signing_algs=ARRAY['ES256']`); err != nil {
+		t.Fatal(err)
+	}
+	resolvedIssuer, err = resolver.ResolveTrustIssuer(ctx, client, "https://issuer.example")
+	if err != nil || resolvedIssuer.Config.MaxTokenAge.Duration() != 2*time.Minute || resolvedIssuer.Config.SigningAlgs[0] != "ES256" {
+		t.Fatalf("changed issuer=%#v error=%v", resolvedIssuer, err)
+	}
+	if _, err = admin.Exec(ctx, `DELETE FROM `+schema+`.issuers`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = resolver.ResolveTrustIssuer(ctx, client, "https://issuer.example"); !errors.Is(err, ErrDenied) {
+		t.Fatalf("revoked issuer error=%v, want denial", err)
+	}
+	for name, test := range map[string]struct{ statement, want string }{
+		"duplicate issuers":         {`SELECT 'dynamic'::text AS issuer_id,'oidc'::text AS provider,'https://issuer.example'::text AS issuer_url,ARRAY['RS256']::text[] AS signing_algs,600::bigint AS max_token_age_seconds FROM generate_series(1,2)`, "result row limit exceeded"},
+		"null issuer URL":           {`SELECT 'dynamic'::text AS issuer_id,'oidc'::text AS provider,NULL::text AS issuer_url,ARRAY['RS256']::text[] AS signing_algs,600::bigint AS max_token_age_seconds`, "columns must be non-null"},
+		"integer instead of bigint": {`SELECT 'dynamic'::text AS issuer_id,'oidc'::text AS provider,'https://issuer.example'::text AS issuer_url,ARRAY['RS256']::text[] AS signing_algs,600::integer AS max_token_age_seconds`, "unexpected column contract"},
+		"null algorithm":            {`SELECT 'dynamic'::text AS issuer_id,'oidc'::text AS provider,'https://issuer.example'::text AS issuer_url,ARRAY['RS256',NULL]::text[] AS signing_algs,600::bigint AS max_token_age_seconds`, "null group element"},
+		"oversized issuer URL":      {`SELECT 'dynamic'::text AS issuer_id,'oidc'::text AS provider,repeat('x',2049)::text AS issuer_url,ARRAY['RS256']::text[] AS signing_algs,600::bigint AS max_token_age_seconds`, "issuer URL exceeds limit"},
+	} {
+		badCfg := cfg
+		badCfg.Queries.TrustIssuer = test.statement + ` WHERE $1::text='client' AND $2::text='https://issuer.example'`
+		bad, openErr := NewPostgreSQL(ctx, restrictedURL, badCfg, nil, nil)
+		if openErr != nil {
+			t.Fatalf("%s setup: %v", name, openErr)
+		}
+		_, _, queryErr := bad.ResolveTrustIssuer(ctx, "client", "https://issuer.example")
+		bad.Close()
+		if !IsIndeterminate(queryErr) || !strings.Contains(queryErr.Error(), test.want) {
+			t.Fatalf("%s error=%v, want indeterminate with %q", name, queryErr, test.want)
+		}
 	}
 	if _, err = admin.Exec(ctx, `UPDATE `+schema+`.users SET groups=NULL`); err != nil {
 		t.Fatal(err)
@@ -162,7 +283,7 @@ func TestPostgreSQLIntegration(t *testing.T) {
 		}
 		var queryErr error
 		if name == "excess trust rows" || name == "aggregate trust JSON" {
-			_, queryErr = bad.ResolveTrust(ctx, "client", "issuer")
+			_, queryErr = bad.ResolveTrustBindings(ctx, "client", "issuer", bad.issuers["issuer"])
 		} else {
 			_, queryErr = bad.ResolveUser(ctx, "client", "user@example.com", false)
 		}
@@ -177,7 +298,7 @@ func TestPostgreSQLIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = framed.ResolveTrust(ctx, "client", "issuer")
+	_, err = framed.ResolveTrustBindings(ctx, "client", "issuer", framed.issuers["issuer"])
 	var bodyLimitErr *pgproto3.ExceededMaxBodyLenErr
 	if !IsIndeterminate(err) || !errors.As(err, &bodyLimitErr) || bodyLimitErr.MaxExpectedBodyLen != backendMessageBodyLimit(frameCfg) || bodyLimitErr.ActualBodyLen <= bodyLimitErr.MaxExpectedBodyLen {
 		t.Fatalf("oversized backend frame error=%v", err)

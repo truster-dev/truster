@@ -30,6 +30,15 @@ type ResolvedClient struct {
 // ResolvedUser contains the effective current groups for a user.
 type ResolvedUser struct{ Groups []string }
 
+// ResolvedTrustIssuer contains effective issuer verification policy and resolver-owned identity.
+type ResolvedTrustIssuer struct {
+	ID       string
+	Config   config.TrustIssuerConfig
+	Dynamic  bool
+	clientID string
+	owner    *Resolver
+}
+
 // Resolver gives static clients deterministic precedence over database policy.
 type Resolver struct {
 	cfg            *config.Config
@@ -109,13 +118,39 @@ func (r *Resolver) ResolveUser(ctx context.Context, client ResolvedClient, subje
 	}
 }
 
-// ResolveTrust returns effective trust bindings without exposing their storage.
-func (r *Resolver) ResolveTrust(ctx context.Context, client ResolvedClient, issuerID string) ([]config.EffectiveTrustBinding, error) {
+// ResolveTrustIssuer resolves an exact token issuer without trusting unverified token claims as configuration.
+func (r *Resolver) ResolveTrustIssuer(ctx context.Context, client ResolvedClient, issuerURL string) (ResolvedTrustIssuer, error) {
+	if r == nil || r.cfg == nil {
+		return ResolvedTrustIssuer{}, &IndeterminateError{Err: errors.New("policy resolver unavailable")}
+	}
+	if client.owner != r {
+		return ResolvedTrustIssuer{}, &IndeterminateError{Err: errors.New("invalid resolved client")}
+	}
+	for id, issuer := range r.cfg.ServiceTokenIssuers {
+		if issuer.IssuerURL == issuerURL {
+			return ResolvedTrustIssuer{ID: id, Config: issuer, clientID: client.id, owner: r}, nil
+		}
+	}
+	if client.source != clientSourceDatabase {
+		return ResolvedTrustIssuer{}, ErrDenied
+	}
+	if r.policyDatabase == nil {
+		return ResolvedTrustIssuer{}, &IndeterminateError{Err: errors.New("policy database unavailable")}
+	}
+	id, issuer, err := r.policyDatabase.ResolveTrustIssuer(ctx, client.id, issuerURL)
+	if err != nil {
+		return ResolvedTrustIssuer{}, err
+	}
+	return ResolvedTrustIssuer{ID: id, Config: issuer, Dynamic: true, clientID: client.id, owner: r}, nil
+}
+
+// ResolveTrustBindings returns effective trust bindings for a client and resolved issuer.
+func (r *Resolver) ResolveTrustBindings(ctx context.Context, client ResolvedClient, issuer ResolvedTrustIssuer) ([]config.EffectiveTrustBinding, error) {
 	if r == nil || r.cfg == nil {
 		return nil, &IndeterminateError{Err: errors.New("policy resolver unavailable")}
 	}
-	if client.owner != r {
-		return nil, &IndeterminateError{Err: errors.New("invalid resolved client")}
+	if client.owner != r || issuer.owner != r || issuer.clientID != client.id {
+		return nil, &IndeterminateError{Err: errors.New("invalid resolved trust issuer")}
 	}
 	switch client.source {
 	case clientSourceStatic:
@@ -123,18 +158,18 @@ func (r *Resolver) ResolveTrust(ctx context.Context, client ResolvedClient, issu
 		if !ok {
 			return nil, &IndeterminateError{Err: errors.New("resolved client policy unavailable")}
 		}
-		return resolveStaticTrust(policy, issuerID), nil
+		return resolveStaticTrust(policy, issuer.ID), nil
 	case clientSourceDatabase:
 		if r.policyDatabase == nil {
 			return nil, &IndeterminateError{Err: errors.New("policy database unavailable")}
 		}
-		compiled, err := r.policyDatabase.ResolveTrust(ctx, client.id, issuerID)
+		compiled, err := r.policyDatabase.ResolveTrustBindings(ctx, client.id, issuer.ID, issuer.Config)
 		if err != nil {
 			return nil, err
 		}
 		bindings := make([]config.EffectiveTrustBinding, 0, len(compiled))
 		for _, binding := range compiled {
-			bindings = append(bindings, config.EffectiveTrustBinding{ID: binding.ID, Issuer: issuerID, Subject: binding.Subject, Groups: binding.Groups, Schema: binding.Schema})
+			bindings = append(bindings, config.EffectiveTrustBinding{ID: binding.ID, Issuer: issuer.ID, Subject: binding.Subject, Groups: binding.Groups, Schema: binding.Schema})
 		}
 		return bindings, nil
 	default:

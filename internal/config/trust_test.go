@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/truster-dev/truster/v2/trustpolicy"
 )
@@ -123,6 +124,27 @@ func TestTrustPresetAndEffectiveIdentityValidation(t *testing.T) {
 	cfg.StaticPolicy.Clients["client"] = client
 	if err := validateTrust(cfg); err != nil {
 		t.Fatalf("rejected valid Kubernetes group name: %v", err)
+	}
+}
+
+// TestValidateDynamicTrustIssuer verifies database-managed issuers use the strict generic OIDC contract.
+func TestValidateDynamicTrustIssuer(t *testing.T) {
+	valid := TrustIssuerConfig{Provider: "oidc", IssuerURL: "https://issuer.example", SigningAlgs: []string{"RS256"}, MaxTokenAge: Duration(10 * time.Minute)}
+	if err := ValidateDynamicTrustIssuer("customer", valid); err != nil {
+		t.Fatalf("valid issuer rejected: %v", err)
+	}
+	for name, mutate := range map[string]func(*TrustIssuerConfig){
+		"preset provider": func(issuer *TrustIssuerConfig) { issuer.Provider = "github" },
+		"insecure URL":    func(issuer *TrustIssuerConfig) { issuer.IssuerURL = "http://localhost:8080" },
+		"unknown alg":     func(issuer *TrustIssuerConfig) { issuer.SigningAlgs = []string{"HS256"} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			issuer := valid
+			mutate(&issuer)
+			if err := ValidateDynamicTrustIssuer("customer", issuer); err == nil {
+				t.Fatal("invalid dynamic issuer accepted")
+			}
+		})
 	}
 }
 

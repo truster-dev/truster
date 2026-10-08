@@ -9,6 +9,7 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/truster-dev/truster/v2/internal/config"
 )
@@ -21,6 +22,7 @@ func TestResolverStaticPrecedenceAndPolicyDatabaseDefaults(t *testing.T) {
 	requireUserGroupsFromPolicy := false
 	policyDatabaseConfig.ClientDefaults = config.PolicyClientDefaults{RequireUserGroupsFromPolicy: &requireUserGroupsFromPolicy, RefreshTokens: config.RefreshTokenConfig{Enabled: true, AllowOfflineAccess: true}}
 	cfg := &config.Config{
+		ServiceTokenIssuers: map[string]config.TrustIssuerConfig{"issuer": {Provider: "oidc", IssuerURL: "https://issuer.example", SigningAlgs: []string{"RS256"}, MaxTokenAge: config.Duration(10 * time.Minute)}},
 		StaticPolicy: config.StaticPolicyConfig{
 			Clients: map[string]config.ClientConfig{"static": {
 				UserGroupMapping: "static-groups",
@@ -52,7 +54,11 @@ func TestResolverStaticPrecedenceAndPolicyDatabaseDefaults(t *testing.T) {
 	if err != nil || calls.Load() != 0 || len(staticUser.Groups) != 2 || staticUser.Groups[0] != "admins" {
 		t.Fatalf("static user = %#v, calls = %d, error = %v", staticUser, calls.Load(), err)
 	}
-	staticTrust, err := resolver.ResolveTrust(context.Background(), static, "issuer")
+	staticIssuer, err := resolver.ResolveTrustIssuer(context.Background(), static, "https://issuer.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	staticTrust, err := resolver.ResolveTrustBindings(context.Background(), static, staticIssuer)
 	if err != nil || calls.Load() != 0 || len(staticTrust) != 1 || staticTrust[0].ID != "static-binding" {
 		t.Fatalf("static trust = %#v, calls = %d, error = %v", staticTrust, calls.Load(), err)
 	}
@@ -128,7 +134,7 @@ func TestResolverRejectsInvalidResolvedClient(t *testing.T) {
 	if _, err := resolver.ResolveUser(context.Background(), ResolvedClient{}, "user@example.com"); !IsIndeterminate(err) {
 		t.Fatalf("user error = %v, want indeterminate", err)
 	}
-	if _, err := resolver.ResolveTrust(context.Background(), ResolvedClient{}, "issuer"); !IsIndeterminate(err) {
+	if _, err := resolver.ResolveTrustBindings(context.Background(), ResolvedClient{}, ResolvedTrustIssuer{}); !IsIndeterminate(err) {
 		t.Fatalf("trust error = %v, want indeterminate", err)
 	}
 	other := NewResolver(&config.Config{StaticPolicy: config.StaticPolicyConfig{Clients: map[string]config.ClientConfig{"client": {}}}}, nil)
@@ -173,7 +179,8 @@ func TestResolverDatabasePolicyDoesNotInheritStaticDefaults(t *testing.T) {
 // TestResolverPolicyDatabaseTrust verifies database policy is returned in the common effective form.
 func TestResolverPolicyDatabaseTrust(t *testing.T) {
 	policyDatabaseConfig := testConfig()
-	cfg := &config.Config{PolicyDatabase: &policyDatabaseConfig}
+	issuerConfig := config.TrustIssuerConfig{Provider: "oidc", IssuerURL: "https://issuer.example", SigningAlgs: []string{"RS256"}, MaxTokenAge: config.Duration(10 * time.Minute)}
+	cfg := &config.Config{PolicyDatabase: &policyDatabaseConfig, ServiceTokenIssuers: map[string]config.TrustIssuerConfig{"issuer": issuerConfig}}
 	database := newPostgreSQL(policyDatabaseConfig, map[string]config.TrustIssuerConfig{"issuer": {Provider: "oidc"}}, nil, func(_ context.Context, query string, _ ...any) (queryResult, error) {
 		switch query {
 		case "exists":
@@ -193,7 +200,11 @@ func TestResolverPolicyDatabaseTrust(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bindings, err := resolver.ResolveTrust(context.Background(), client, "issuer")
+	issuer, err := resolver.ResolveTrustIssuer(context.Background(), client, issuerConfig.IssuerURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings, err := resolver.ResolveTrustBindings(context.Background(), client, issuer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,5 +213,73 @@ func TestResolverPolicyDatabaseTrust(t *testing.T) {
 	}
 	if err := bindings[0].Schema.Validate(map[string]any{"repository": "example/project"}); err != nil {
 		t.Fatalf("effective schema rejected matching claims: %v", err)
+	}
+}
+
+// TestResolverDynamicTrustIssuer verifies database clients can resolve generic OIDC without allowing static-client fallback.
+func TestResolverDynamicTrustIssuer(t *testing.T) {
+	policyDatabaseConfig := testConfig()
+	database := newPostgreSQL(policyDatabaseConfig, nil, nil, func(_ context.Context, query string, _ ...any) (queryResult, error) {
+		switch query {
+		case "exists":
+			return queryResult{columns: []string{"exists"}, rows: [][]any{{true}}}, nil
+		case "issuer":
+			return queryResult{
+				columns: []string{"issuer_id", "provider", "issuer_url", "signing_algs", "max_token_age_seconds"},
+				rows:    [][]any{{"customer-oidc", "oidc", "https://issuer.example", []string{"RS256"}, int64(600)}},
+			}, nil
+		case "trust":
+			return queryResult{
+				columns: []string{"client_id", "issuer_id", "binding_id", "subject", "required_claims", "policy_claims", "binding_claims", "groups"},
+				rows:    [][]any{{"dynamic", "customer-oidc", "binding", "trusted:user", []byte(`{}`), []byte(`{}`), []byte(`{"tenant":{"const":"acme"}}`), []string{"builders"}}},
+			}, nil
+		default:
+			t.Fatalf("unexpected query %q", query)
+			return queryResult{}, nil
+		}
+	}, nil)
+	cfg := &config.Config{
+		PolicyDatabase: &policyDatabaseConfig,
+		StaticPolicy:   config.StaticPolicyConfig{Clients: map[string]config.ClientConfig{"static": {}}},
+	}
+	resolver := NewResolver(cfg, database)
+	dynamic, err := resolver.ResolveClient(context.Background(), "dynamic", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuer, err := resolver.ResolveTrustIssuer(context.Background(), dynamic, "https://issuer.example")
+	if err != nil || issuer.ID != "customer-oidc" || !issuer.Dynamic {
+		t.Fatalf("issuer=%#v error=%v", issuer, err)
+	}
+	bindings, err := resolver.ResolveTrustBindings(context.Background(), dynamic, issuer)
+	if err != nil || len(bindings) != 1 || bindings[0].Issuer != "customer-oidc" {
+		t.Fatalf("bindings=%#v error=%v", bindings, err)
+	}
+	other, err := resolver.ResolveClient(context.Background(), "other", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = resolver.ResolveTrustBindings(context.Background(), other, issuer); !IsIndeterminate(err) {
+		t.Fatalf("cross-client issuer error=%v, want indeterminate", err)
+	}
+	static, err := resolver.ResolveClient(context.Background(), "static", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = resolver.ResolveTrustIssuer(context.Background(), static, "https://issuer.example"); !errors.Is(err, ErrDenied) {
+		t.Fatalf("static client dynamic issuer error=%v, want denial", err)
+	}
+	if _, err = resolver.ResolveTrustBindings(context.Background(), static, issuer); !IsIndeterminate(err) {
+		t.Fatalf("static client reused dynamic issuer error=%v, want indeterminate", err)
+	}
+	// A static issuer with the same URL must bypass the database issuer query.
+	cfg.ServiceTokenIssuers = map[string]config.TrustIssuerConfig{"operator": issuer.Config}
+	database.query = func(context.Context, string, ...any) (queryResult, error) {
+		t.Fatal("static issuer resolution queried the database")
+		return queryResult{}, nil
+	}
+	issuer, err = resolver.ResolveTrustIssuer(context.Background(), dynamic, "https://issuer.example")
+	if err != nil || issuer.ID != "operator" || issuer.Dynamic {
+		t.Fatalf("static precedence issuer=%#v error=%v", issuer, err)
 	}
 }

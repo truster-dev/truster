@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"sort"
 	"strings"
@@ -144,6 +145,9 @@ func queryPostgreSQL(ctx context.Context, pool *pgxpool.Pool, cfg config.PolicyD
 		columns, oids = []string{"exists"}, [][]uint32{{pgtype.BoolOID}}
 	case cfg.Queries.UserAccess:
 		columns, oids = []string{"allowed", "groups"}, [][]uint32{{pgtype.BoolOID}, {pgtype.TextArrayOID}}
+	case cfg.Queries.TrustIssuer:
+		columns = []string{"issuer_id", "provider", "issuer_url", "signing_algs", "max_token_age_seconds"}
+		oids = [][]uint32{{pgtype.TextOID}, {pgtype.TextOID}, {pgtype.TextOID}, {pgtype.TextArrayOID}, {pgtype.Int8OID}}
 	case cfg.Queries.TrustBindings:
 		columns = []string{"client_id", "issuer_id", "binding_id", "subject", "required_claims", "policy_claims", "binding_claims", "groups"}
 		oids = [][]uint32{{pgtype.TextOID}, {pgtype.TextOID}, {pgtype.TextOID}, {pgtype.TextOID}, {pgtype.JSONOID, pgtype.JSONBOID}, {pgtype.JSONOID, pgtype.JSONBOID}, {pgtype.JSONOID, pgtype.JSONBOID}, {pgtype.TextArrayOID}}
@@ -151,7 +155,7 @@ func queryPostgreSQL(ctx context.Context, pool *pgxpool.Pool, cfg config.PolicyD
 	default:
 		return queryResult{}, fmt.Errorf("unknown policy database query")
 	}
-	formats := pgx.QueryResultFormatsByOID{pgtype.BoolOID: pgx.TextFormatCode, pgtype.TextOID: pgx.TextFormatCode, pgtype.JSONOID: pgx.TextFormatCode, pgtype.JSONBOID: pgx.TextFormatCode, pgtype.TextArrayOID: pgx.TextFormatCode}
+	formats := pgx.QueryResultFormatsByOID{pgtype.BoolOID: pgx.TextFormatCode, pgtype.TextOID: pgx.TextFormatCode, pgtype.JSONOID: pgx.TextFormatCode, pgtype.JSONBOID: pgx.TextFormatCode, pgtype.TextArrayOID: pgx.TextFormatCode, pgtype.Int8OID: pgx.TextFormatCode}
 	queryArgs := append([]any{formats}, args...)
 	rows, err := pool.Query(ctx, sql, queryArgs...)
 	if err != nil {
@@ -208,6 +212,8 @@ func queryPostgreSQL(ctx context.Context, pool *pgxpool.Pool, cfg config.PolicyD
 				scan[i] = new(string)
 			case pgtype.TextArrayOID:
 				scan[i] = new([]string)
+			case pgtype.Int8OID:
+				scan[i] = new(int64)
 			default:
 				scan[i] = new([]byte)
 			}
@@ -222,6 +228,8 @@ func queryPostgreSQL(ctx context.Context, pool *pgxpool.Pool, cfg config.PolicyD
 			case *string:
 				values[i] = *value
 			case *[]string:
+				values[i] = *value
+			case *int64:
 				values[i] = *value
 			case *[]byte:
 				values[i] = append([]byte(nil), (*value)...)
@@ -254,6 +262,14 @@ func checkRawRow(cfg config.PolicyDatabaseConfig, columns []string, raw [][]byte
 			if len(value) > 256 {
 				return 0, 0, fmt.Errorf("identity column exceeds limit")
 			}
+		case "provider":
+			if len(value) > 16 {
+				return 0, 0, fmt.Errorf("provider column exceeds limit")
+			}
+		case "issuer_url":
+			if len(value) > 2048 {
+				return 0, 0, fmt.Errorf("issuer URL exceeds limit")
+			}
 		case "binding_id":
 			if len(value) > 64 {
 				return 0, 0, fmt.Errorf("binding identifier exceeds limit")
@@ -264,6 +280,14 @@ func checkRawRow(cfg config.PolicyDatabaseConfig, columns []string, raw [][]byte
 			}
 			if err := validateTextArrayWire(value, cfg.MaxGroups, cfg.MaxGroupBytes); err != nil {
 				return 0, 0, err
+			}
+		case "signing_algs":
+			if err := validateTextArrayWire(value, 16, 16); err != nil {
+				return 0, 0, fmt.Errorf("invalid signing algorithms: %w", err)
+			}
+		case "max_token_age_seconds":
+			if len(value) > 19 {
+				return 0, 0, fmt.Errorf("token age exceeds limit")
 			}
 		case "required_claims", "policy_claims", "binding_claims":
 			jsonTotal += len(value)
@@ -278,7 +302,7 @@ func checkRawRow(cfg config.PolicyDatabaseConfig, columns []string, raw [][]byte
 // rawRowBudget derives a conservative decoded-message ceiling from configured cell limits.
 func rawRowBudget(cfg config.PolicyDatabaseConfig) int {
 	groupWire := 2 + cfg.MaxGroups*(2*cfg.MaxGroupBytes+4)
-	return 4*256 + groupWire + cfg.MaxJSONBytes + 64
+	return 4*256 + groupWire + cfg.MaxJSONBytes + 4096
 }
 
 // backendMessageBodyLimit bounds a single backend message before pgproto3 allocates its body.
@@ -369,7 +393,11 @@ func validatePool(ctx context.Context, pool *pgxpool.Pool, cfg config.PolicyData
 		return fmt.Errorf("acquire policy database validation connection")
 	}
 	defer connection.Release()
-	for _, statement := range []string{cfg.Queries.ClientExists, cfg.Queries.UserAccess, cfg.Queries.TrustBindings} {
+	statements := []string{cfg.Queries.ClientExists, cfg.Queries.UserAccess, cfg.Queries.TrustIssuer, cfg.Queries.TrustBindings}
+	for _, statement := range statements {
+		if statement == "" {
+			continue
+		}
 		if _, err = connection.Conn().Prepare(ctx, "", statement); err != nil {
 			return fmt.Errorf("prepare policy database query")
 		}
@@ -417,6 +445,9 @@ func (r *PostgreSQL) clientExists(ctx context.Context, clientID string, cached b
 	if !validDynamicClientID(clientID) {
 		finalErr = indeterminate(fmt.Errorf("invalid dynamic client identifier"))
 		return false, finalErr
+	}
+	if r.cfg.Queries.ClientExists == "" {
+		return false, nil
 	}
 	now := r.now()
 	r.mu.Lock()
@@ -476,6 +507,9 @@ func (r *PostgreSQL) ResolveUser(ctx context.Context, clientID, subject string, 
 	if !validDynamicClientID(clientID) {
 		return ResolvedUser{}, indeterminate(fmt.Errorf("invalid dynamic client identifier"))
 	}
+	if r.cfg.Queries.UserAccess == "" {
+		return ResolvedUser{}, ErrDenied
+	}
 	result, err := r.run(ctx, "user_access", r.cfg.Queries.UserAccess, clientID, strings.ToLower(subject))
 	rows = len(result.rows)
 	if err != nil {
@@ -498,12 +532,64 @@ func (r *PostgreSQL) ResolveUser(ctx context.Context, clientID, subject string, 
 	return ResolvedUser{Groups: groups}, nil
 }
 
-// CompileBindings validates current dynamic rows and compiles or reuses immutable schemas.
-func (r *PostgreSQL) CompileBindings(clientID, issuerID string, rows []DynamicTrustRow) ([]CompiledBinding, error) {
-	issuer, ok := r.issuers[issuerID]
-	if !ok {
-		return nil, indeterminate(fmt.Errorf("issuer is not configured in service_token_issuers"))
+// ResolveTrustIssuer resolves one current generic OIDC issuer by exact URL.
+func (r *PostgreSQL) ResolveTrustIssuer(ctx context.Context, clientID, issuerURL string) (issuerID string, issuer config.TrustIssuerConfig, finalErr error) {
+	start := time.Now()
+	rowsObserved := 0
+	defer func() {
+		r.log("trust_issuer", outcome(finalErr == nil, finalErr), clientID, issuerID, time.Since(start), rowsObserved, "bypass")
+	}()
+	if !validDynamicClientID(clientID) || len(issuerURL) > 2048 {
+		return "", config.TrustIssuerConfig{}, indeterminate(fmt.Errorf("invalid dynamic trust issuer lookup"))
 	}
+	if strings.TrimSpace(r.cfg.Queries.TrustIssuer) == "" {
+		return "", config.TrustIssuerConfig{}, ErrDenied
+	}
+	result, err := r.run(ctx, "trust_issuer", r.cfg.Queries.TrustIssuer, clientID, issuerURL)
+	rowsObserved = len(result.rows)
+	if err != nil {
+		return "", config.TrustIssuerConfig{}, err
+	}
+	want := []string{"issuer_id", "provider", "issuer_url", "signing_algs", "max_token_age_seconds"}
+	if err := exact(result, want, -1); err != nil {
+		return "", config.TrustIssuerConfig{}, indeterminate(err)
+	}
+	if len(result.rows) == 0 {
+		return "", config.TrustIssuerConfig{}, ErrDenied
+	}
+	if len(result.rows) != 1 {
+		return "", config.TrustIssuerConfig{}, indeterminate(fmt.Errorf("unexpected trust issuer row count"))
+	}
+	values := result.rows[0]
+	var ok bool
+	if issuerID, ok = values[0].(string); !ok {
+		return "", config.TrustIssuerConfig{}, indeterminate(fmt.Errorf("issuer_id must be non-null text"))
+	}
+	if _, exists := r.issuers[issuerID]; exists {
+		return "", config.TrustIssuerConfig{}, indeterminate(fmt.Errorf("database issuer_id conflicts with service_token_issuers"))
+	}
+	if issuer.Provider, ok = values[1].(string); !ok {
+		return "", config.TrustIssuerConfig{}, indeterminate(fmt.Errorf("provider must be non-null text"))
+	}
+	if issuer.IssuerURL, ok = values[2].(string); !ok || issuer.IssuerURL != issuerURL {
+		return "", config.TrustIssuerConfig{}, indeterminate(fmt.Errorf("issuer_url must exactly match the lookup"))
+	}
+	if issuer.SigningAlgs, err = decodeTextArray(values[3]); err != nil {
+		return "", config.TrustIssuerConfig{}, indeterminate(fmt.Errorf("signing_algs must be non-null text array"))
+	}
+	seconds, ok := values[4].(int64)
+	if !ok || seconds <= 0 || seconds > math.MaxInt64/int64(time.Second) {
+		return "", config.TrustIssuerConfig{}, indeterminate(fmt.Errorf("max_token_age_seconds must be a positive bigint duration"))
+	}
+	issuer.MaxTokenAge = config.Duration(time.Duration(seconds) * time.Second)
+	if err := config.ValidateDynamicTrustIssuer(issuerID, issuer); err != nil {
+		return "", config.TrustIssuerConfig{}, indeterminate(err)
+	}
+	return issuerID, issuer, nil
+}
+
+// compileBindings validates current dynamic rows and compiles or reuses immutable schemas.
+func (r *PostgreSQL) compileBindings(clientID, issuerID string, issuer config.TrustIssuerConfig, rows []DynamicTrustRow) ([]CompiledBinding, error) {
 	if len(rows) > r.cfg.MaxTrustRows {
 		return nil, indeterminate(fmt.Errorf("trust row limit exceeded"))
 	}
@@ -558,8 +644,8 @@ func (r *PostgreSQL) CompileBindings(clientID, issuerID string, rows []DynamicTr
 	return out, nil
 }
 
-// ResolveTrust queries strict rows and returns compiled current bindings.
-func (r *PostgreSQL) ResolveTrust(ctx context.Context, clientID, issuerID string) (bindings []CompiledBinding, finalErr error) {
+// ResolveTrustBindings queries strict rows and compiles bindings using the resolved issuer policy.
+func (r *PostgreSQL) ResolveTrustBindings(ctx context.Context, clientID, issuerID string, issuer config.TrustIssuerConfig) (bindings []CompiledBinding, finalErr error) {
 	start := time.Now()
 	rowsObserved := 0
 	defer func() {
@@ -567,6 +653,9 @@ func (r *PostgreSQL) ResolveTrust(ctx context.Context, clientID, issuerID string
 	}()
 	if !validDynamicClientID(clientID) {
 		return nil, indeterminate(fmt.Errorf("invalid dynamic client identifier"))
+	}
+	if r.cfg.Queries.TrustBindings == "" {
+		return nil, ErrDenied
 	}
 	result, err := r.run(ctx, "trust_bindings", r.cfg.Queries.TrustBindings, clientID, issuerID)
 	rowsObserved = len(result.rows)
@@ -588,7 +677,7 @@ func (r *PostgreSQL) ResolveTrust(ctx context.Context, clientID, issuerID string
 		}
 		rows = append(rows, row)
 	}
-	return r.CompileBindings(clientID, issuerID, rows)
+	return r.compileBindings(clientID, issuerID, issuer, rows)
 }
 
 // run executes one policy database query within the configured timeout.

@@ -50,7 +50,7 @@ func BenchmarkTrustRowQueryCompile(b *testing.B) {
 	}, nil)
 	b.ResetTimer()
 	for range b.N {
-		if _, err := r.ResolveTrust(context.Background(), "cluster", "github"); err != nil {
+		if _, err := r.ResolveTrustBindings(context.Background(), "cluster", "github", r.issuers["github"]); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -89,12 +89,12 @@ func BenchmarkDefaultTrustRowLimit(b *testing.B) {
 	r := newPostgreSQL(cfg, map[string]config.TrustIssuerConfig{"github": {Provider: "github"}}, benchmarkLogger(), func(context.Context, string, ...any) (queryResult, error) {
 		return queryResult{columns: []string{"client_id", "issuer_id", "binding_id", "subject", "required_claims", "policy_claims", "binding_claims", "groups"}, rows: rows}, nil
 	}, nil)
-	if _, err := r.ResolveTrust(context.Background(), "cluster", "github"); err != nil {
+	if _, err := r.ResolveTrustBindings(context.Background(), "cluster", "github", r.issuers["github"]); err != nil {
 		b.Fatal(err)
 	}
 	b.ResetTimer()
 	for range b.N {
-		if _, err := r.ResolveTrust(context.Background(), "cluster", "github"); err != nil {
+		if _, err := r.ResolveTrustBindings(context.Background(), "cluster", "github", r.issuers["github"]); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -117,7 +117,7 @@ func benchmarkSchemaCompilation(b *testing.B, changed bool) {
 		if changed {
 			row.BindingClaims["tenant"] = json.RawMessage(fmt.Sprintf(`{"const":"%d"}`, i))
 		}
-		if _, err := r.CompileBindings("cluster", "issuer", []DynamicTrustRow{row}); err != nil {
+		if _, err := r.compileBindings("cluster", "issuer", r.issuers["issuer"], []DynamicTrustRow{row}); err != nil {
 			b.Fatal(err)
 		}
 	}

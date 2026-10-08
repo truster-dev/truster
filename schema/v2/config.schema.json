@@ -958,21 +958,34 @@
         "queries": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Optional query overrides. Omitted queries use the built-in truster_policy PostgreSQL schema.",
+          "description": "Policy database queries. Omit a query to use its built-in SQL, provide non-empty SQL to override it, or set it to null to disable that lookup. These queries run only when policy_database is configured and never for static clients.",
           "properties": {
             "client_exists": {
-              "type": "string",
+              "type": ["string", "null"],
               "minLength": 1,
+              "pattern": "\\S",
+              "description": "Checks whether a database-managed client exists. Parameter: $1 client ID. Returns exactly one row with a non-null boolean exists column. Omit for built-in SQL; null disables database-managed clients without affecting static clients.",
               "default": "SELECT EXISTS (SELECT 1 FROM truster_policy.clients WHERE client_id = $1) AS exists"
             },
             "user_access": {
-              "type": "string",
+              "type": ["string", "null"],
               "minLength": 1,
+              "pattern": "\\S",
+              "description": "Checks user access and loads current groups for a database-managed client. Parameters: $1 client ID, $2 lowercase email subject. Returns exactly one row with non-null allowed boolean and groups text[] columns. Omit for built-in SQL; null denies human sign-in and refresh for database-managed clients, even when groups are optional.",
               "default": "SELECT users.subject IS NOT NULL AS allowed, COALESCE(users.groups, ARRAY[]::text[]) AS groups FROM (VALUES ($1::text, $2::text)) AS input(client_id, subject) LEFT JOIN truster_policy.users USING (client_id, subject)"
             },
-            "trust_bindings": {
-              "type": "string",
+            "trust_issuer": {
+              "type": ["string", "null"],
               "minLength": 1,
+              "pattern": "\\S",
+              "description": "Loads an approved OIDC issuer for a database-managed client by exact URL. Parameters: $1 client ID, $2 token issuer URL. Returns zero or one row with issuer_id text, provider text, issuer_url text, signing_algs text[], and max_token_age_seconds bigint columns, in that order. Omit for built-in SQL; null disables dynamic issuer lookup without affecting statically configured issuers.",
+              "default": "SELECT issuer_id, provider, issuer_url, signing_algs, max_token_age_seconds FROM truster_policy.trust_issuers WHERE client_id = $1 AND issuer_url = $2"
+            },
+            "trust_bindings": {
+              "type": ["string", "null"],
+              "minLength": 1,
+              "pattern": "\\S",
+              "description": "Loads current trust bindings for a verified token. Parameters: $1 client ID, $2 resolved issuer ID. Returns zero or more rows with client_id text, issuer_id text, binding_id text, subject text, required_claims json/jsonb, policy_claims json/jsonb, binding_claims json/jsonb, and groups text[] columns, in that order. Omit for built-in SQL; null denies service-token exchange for database-managed clients, including those using static issuers.",
               "default": "SELECT client_id, issuer_id, binding_id, subject, required_claims, policy_claims, binding_claims, groups FROM truster_policy.trust_bindings WHERE client_id = $1 AND issuer_id = $2 ORDER BY binding_id"
             }
           }

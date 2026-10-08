@@ -7,6 +7,7 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -239,7 +240,7 @@ func TestPolicyDatabaseSchemaAndLoaderValidation(t *testing.T) {
 		"user_login_connectors": map[string]any{"google": map[string]any{"type": "google", "display_name": "Google", "credentials_secret": "GOOGLE"}},
 		"policy_database": map[string]any{
 			"driver": "postgresql", "connection_string_secret": "DATABASE_URL", "redirect_uris": []any{"http://localhost:18000"},
-			"queries": map[string]any{"client_exists": "select true as exists", "user_access": "select true as allowed, array[]::text[] as groups", "trust_bindings": "select 1 where false"},
+			"queries": map[string]any{"client_exists": "select true as exists", "user_access": "select true as allowed, array[]::text[] as groups", "trust_issuer": "select 1 where false", "trust_bindings": "select 1 where false"},
 		},
 	}
 	tests := []struct {
@@ -373,8 +374,31 @@ func TestPolicyDatabaseSchemaAndLoaderValidation(t *testing.T) {
 		{"partial query override", true, true, func(c map[string]any) {
 			queries := c["policy_database"].(map[string]any)["queries"].(map[string]any)
 			delete(queries, "user_access")
+			delete(queries, "trust_issuer")
 			delete(queries, "trust_bindings")
 		}},
+		{"null queries object", false, false, func(c map[string]any) {
+			c["policy_database"].(map[string]any)["queries"] = nil
+		}},
+		{"all queries disabled", true, true, func(c map[string]any) {
+			c["policy_database"].(map[string]any)["queries"] = map[string]any{"client_exists": nil, "user_access": nil, "trust_issuer": nil, "trust_bindings": nil}
+		}},
+		{"noncanonical query name", false, false, func(c map[string]any) {
+			c["policy_database"].(map[string]any)["queries"] = map[string]any{"CLIENT_EXISTS": nil}
+		}},
+	}
+	for _, name := range []string{"client_exists", "user_access", "trust_issuer", "trust_bindings"} {
+		for _, value := range []any{nil, "", " \t\n", false} {
+			valid := value == nil
+			tests = append(tests, struct {
+				name        string
+				schemaValid bool
+				loaderValid bool
+				edit        func(map[string]any)
+			}{fmt.Sprintf("query %s = %v", name, value), valid, valid, func(c map[string]any) {
+				c["policy_database"].(map[string]any)["queries"] = map[string]any{name: value}
+			}})
+		}
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -402,14 +426,28 @@ func TestPolicyDatabaseSchemaAndLoaderValidation(t *testing.T) {
 			}
 			if loaded != nil && test.name == "default queries" {
 				queries := loaded.PolicyDatabase.Queries
-				if queries.ClientExists != defaultClientExistsQuery || queries.UserAccess != defaultUserAccessQuery || queries.TrustBindings != defaultTrustBindingsQuery {
+				if queries.ClientExists != defaultClientExistsQuery || queries.UserAccess != defaultUserAccessQuery || queries.TrustIssuer != defaultTrustIssuerQuery || queries.TrustBindings != defaultTrustBindingsQuery {
 					t.Fatalf("unexpected query defaults: %#v", queries)
 				}
 			}
 			if loaded != nil && test.name == "partial query override" {
 				queries := loaded.PolicyDatabase.Queries
-				if queries.ClientExists != "select true as exists" || queries.UserAccess != defaultUserAccessQuery || queries.TrustBindings != defaultTrustBindingsQuery {
+				if queries.ClientExists != "select true as exists" || queries.UserAccess != defaultUserAccessQuery || queries.TrustIssuer != defaultTrustIssuerQuery || queries.TrustBindings != defaultTrustBindingsQuery {
 					t.Fatalf("unexpected query overrides: %#v", queries)
+				}
+			}
+			if loaded != nil {
+				queries := loaded.PolicyDatabase.Queries
+				if rawQueries, ok := instance["policy_database"].(map[string]any)["queries"].(map[string]any); ok {
+					for name, value := range map[string]string{"client_exists": queries.ClientExists, "user_access": queries.UserAccess, "trust_issuer": queries.TrustIssuer, "trust_bindings": queries.TrustBindings} {
+						expected := map[string]string{"client_exists": defaultClientExistsQuery, "user_access": defaultUserAccessQuery, "trust_issuer": defaultTrustIssuerQuery, "trust_bindings": defaultTrustBindingsQuery}[name]
+						if raw, present := rawQueries[name]; present {
+							expected, _ = raw.(string)
+						}
+						if value != expected {
+							t.Errorf("query %s = %q, want %q", name, value, expected)
+						}
+					}
 				}
 			}
 		})
@@ -431,6 +469,7 @@ func TestPolicyDatabaseQueryDefaultsMatchSchema(t *testing.T) {
 	for name, expected := range map[string]string{
 		"client_exists":  defaultClientExistsQuery,
 		"user_access":    defaultUserAccessQuery,
+		"trust_issuer":   defaultTrustIssuerQuery,
 		"trust_bindings": defaultTrustBindingsQuery,
 	} {
 		if got := queries[name].(map[string]any)["default"]; got != expected {

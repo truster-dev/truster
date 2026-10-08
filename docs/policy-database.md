@@ -45,10 +45,11 @@ Truster includes a ready-to-use PostgreSQL schema. Apply it to the database:
 psql "$DATABASE_URL" -f examples/policy-db/postgresql.sql
 ```
 
-The script creates three tables under the `truster_policy` schema:
+The script creates four tables under the `truster_policy` schema:
 
 - `clients` contains client IDs accepted by Truster.
 - `users` associates an email subject and groups with a client.
+- `trust_issuers` contains OIDC issuers approved for a client.
 - `trust_bindings` maps external OIDC identities to subjects and groups.
 
 See [`examples/policy-db/postgresql.sql`](https://github.com/truster-dev/truster/blob/main/examples/policy-db/postgresql.sql)
@@ -75,8 +76,8 @@ objects referenced by custom queries.
 Store the PostgreSQL connection string in your configured secrets provider. The
 value of `connection_string_secret` is the name of that secret.
 
-The built-in queries use the tables created above, so the configuration does not
-need to contain any SQL:
+All four built-in queries use the tables created above, so the configuration
+does not need to contain SQL:
 
 ```jsonc
 "policy_database": {
@@ -107,6 +108,30 @@ VALUES ('kubelogin', 'demo@example.com', ARRAY['developers']);
 You can use the built-in schema without configuring any queries. To use tables
 from an existing application database, override one or more entries under
 `policy_database.queries`. Any omitted query continues to use its built-in value.
+
+Set an individual query to `null` to disable that lookup. Empty or whitespace-only
+SQL is invalid. Disabling a lookup denies the operation that needs it; it does
+not bypass authorization:
+
+| Query set to `null` | Effect |
+| --- | --- |
+| `client_exists` | Database-managed clients are denied. |
+| `user_access` | Human sign-in and refresh for database-managed clients are denied, even when groups are optional. |
+| `trust_issuer` | Dynamic issuer lookup is disabled; statically configured issuers remain usable. |
+| `trust_bindings` | Service-token exchange for database-managed clients is denied, including when the issuer is statically configured. |
+
+For example, to use database-managed clients and users but only statically
+configured service-token issuers:
+
+```jsonc
+"queries": {
+  "trust_issuer": null
+}
+```
+
+Truster prepares only enabled queries at startup. These queries are used only
+when `policy_database` is configured, and never for static clients. Disabling
+all four queries does not affect static-client authorization.
 
 Configured SQL is trusted configuration. Truster binds the values described
 below as positional parameters; it never interpolates them into the SQL.
@@ -143,6 +168,46 @@ client, an allowed result with an empty group array is denied. Returned groups
 must be non-empty strings; Truster deduplicates and sorts them before issuing
 a token.
 
+### `trust_issuer`
+
+Resolves an approved OIDC issuer for a database-managed client. Before any
+policy database or issuer HTTP request, Truster rejects malformed or oversized
+tokens, missing required claims, expired or not-yet-valid tokens, invalid
+audiences or authorized parties, and claims exceeding structural safety limits.
+
+Those checks are rejection-only: the token is still unverified. Truster uses its
+`iss` value only as an exact lookup key into approved database policy. A matching
+row supplies verification settings, not proof of identity. Truster must still
+complete OIDC discovery, verify the signature over the original token, repeat
+standard-claim validation, enforce the issuer's maximum token age, and match
+exactly one trust binding.
+
+The built-in query reads `truster_policy.trust_issuers`. Omit this query to use
+that default, or set it to `null` to disable dynamic issuer lookup without
+affecting statically configured issuers.
+
+- Parameters:
+  - `$1` — client ID as `text`.
+  - `$2` — the token's exact `iss` value as `text`.
+- Result:
+  - Zero or one row. Zero rows deny the issuer.
+  - Columns must appear in this order:
+    - `issuer_id text`
+    - `provider text`, currently exactly `oidc`
+    - `issuer_url text`, exactly matching `$2`
+    - `signing_algs text[]`
+    - `max_token_age_seconds bigint`
+
+The issuer ID must satisfy Truster's trust identifier rules and must not collide
+with an ID in `service_token_issuers`. The issuer URL must use HTTPS, signing
+algorithms must be supported asymmetric algorithms, and the maximum token age
+must be positive. More than one row, malformed values, or a URL that differs
+from the lookup value is treated as a policy database failure.
+
+Static `service_token_issuers` take precedence over this query. Truster only
+uses `trust_issuer` for database-managed clients and never lets a static client
+fall through to database issuer policy.
+
 ### `trust_bindings`
 
 Returns the current trust bindings used to evaluate a verified external OIDC
@@ -150,8 +215,7 @@ token.
 
 - Parameters:
   - `$1` — client ID as `text`.
-  - `$2` — issuer ID as `text`. The issuer must also exist under the static
-    `service_token_issuers` configuration.
+  - `$2` — the resolved static or dynamic issuer ID as `text`.
 - Result:
   - Zero or more rows.
   - Columns must appear in this order:
@@ -194,14 +258,37 @@ database. If both sources contain the same client ID, static policy wins.
   256 bytes.
 - Users resolved through database policy do not require an external OIDC trust
   issuer.
-- Trust bindings loaded from database policy may only use issuer IDs defined by
-  `service_token_issuers`.
+- Trust bindings loaded from database policy may use a static issuer from
+  `service_token_issuers` or the dynamic issuer resolved for the current token.
 
 ## Policy database security
 
 Use a dedicated login and pool for Truster, even when another feature uses the
 same PostgreSQL server. The dedicated login limits the impact of a mistake in a
 query or configuration.
+
+Database-managed issuers must use HTTPS. Truster resolves and connects to them
+directly without an HTTP proxy. Before dialing, it rejects loopback, private,
+link-local, multicast, unspecified, and shared IPv4 (`100.64.0.0/10`) addresses.
+It dials the checked IP rather than resolving the hostname again, and rejects
+cross-origin redirects. These checks apply to both discovery and JWKS requests.
+
+Truster does not maintain an exhaustive special-purpose address blocklist or
+restrict IPv6 to a particular allocation. Public NAT64 and 6to4 destinations
+are not excluded simply because they use translation or tunneling. An address
+passing these checks is not proof that its destination is safe: routing or
+translation can still lead to private infrastructure, including metadata services.
+
+Use enforced network-egress rules or an egress gateway to restrict the actual
+destinations and ports reachable by dynamic issuer requests. Those controls must
+cover IPv4, IPv6, and translated traffic. An ambient `HTTPS_PROXY` setting does
+not enforce this boundary because dynamic issuer requests bypass it. Take care
+not to expose private database, secret-store, or static-issuer destinations to
+dynamic issuer requests just because the Truster process needs access to them.
+
+An operator who intentionally needs a private-network issuer must configure it
+statically under `service_token_issuers` instead of returning it from database
+policy.
 
 For remote connections, use strict TLS:
 
@@ -216,7 +303,7 @@ For remote connections, use strict TLS:
   only accepted for `localhost` or a loopback IP during development.
 
 At startup, Truster loads the connection secret, checks connectivity, and
-prepares all three statements within a 10-second initialization deadline.
+prepares each enabled query within a 10-second initialization deadline.
 Preparation validates SQL parsing and parameter inference, but does not execute
 the statements or verify result aliases, column order, PostgreSQL types,
 cardinality, or configured result limits. Those contracts are enforced every
@@ -269,12 +356,17 @@ and a bounded number of entries. Initial authorization and `/userinfo` may use
 this cache. Callback completion, authorization-code redemption, refresh, and
 token exchange bypass it.
 
-User groups and trust-binding rows are never cached. Changes to those rows are
-therefore read on the next relevant operation. The `policy_build_cache` stores
-only immutable compiled JSON Schema artifacts. Changing required, policy, or
-binding claim-schema content creates a different cache entry. Subject-only and
-group-only edits may reuse the compiled schema, but the current subject and
-groups are still read from PostgreSQL and applied immediately.
+Dynamic issuer, user-group, and trust-binding rows are never cached. Changes to
+those rows are therefore read on the next relevant operation. OIDC discovery
+metadata and keys have a separate network cache limited to 1,024 entries with a
+five-minute lifetime. Static and dynamic issuers use separate cache entries so
+database policy cannot reuse keys fetched through the unrestricted static
+transport. A removed or disabled dynamic issuer is denied before that cache is
+used. The `policy_build_cache` stores only immutable compiled JSON Schema artifacts.
+Changing required, policy, or binding claim-schema content creates a different
+cache entry. Subject-only and group-only edits may reuse the compiled schema,
+but the current subject and groups are still read from PostgreSQL and applied
+immediately.
 
 The defaults are conservative safety ceilings rather than throughput targets.
 The authpolicy benchmarks exercise cached client lookup, group normalization,
@@ -297,8 +389,9 @@ Truster rechecks database policy before issuing or refreshing credentials:
   the client and user before creating a code, and checks them again when the code
   is redeemed.
 - Refresh checks the client and user on every token rotation.
-- Token exchange checks the client, verifies the external token, and then loads
-  the current trust bindings.
+- Token exchange rejects obviously invalid tokens first, checks the client,
+  resolves any dynamic issuer, verifies the external token and its claims,
+  and then loads the current trust bindings.
 
 As a result, an existing authorization code or refresh token does not preserve
 old client, user-group, or trust policy. The positive client cache reduces

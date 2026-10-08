@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math"
 	"slices"
 	"strings"
 	"sync"
@@ -33,6 +34,8 @@ func TestPostgreSQLOperationLogs(t *testing.T) {
 			return queryResult{columns: []string{"exists"}, rows: [][]any{{false}}}, nil
 		case "user":
 			return queryResult{columns: []string{"allowed", "groups"}, rows: [][]any{{false, []string{}}}}, nil
+		case "issuer":
+			return queryResult{columns: []string{"issuer_id", "provider", "issuer_url", "signing_algs", "max_token_age_seconds"}, rows: [][]any{{"custom", "oidc", "https://secret-issuer.example", []string{"RS256"}, int64(600)}}}, nil
 		default:
 			return queryResult{columns: []string{"client_id", "issuer_id", "binding_id", "subject", "required_claims", "policy_claims", "binding_claims", "groups"}, rows: [][]any{{"wrong-client", "issuer", "binding", "trusted:secret-subject", []byte(`{}`), []byte(`{}`), []byte(`{}`), []string{"group"}}}}, nil
 		}
@@ -44,8 +47,11 @@ func TestPostgreSQLOperationLogs(t *testing.T) {
 	if _, err := r.ResolveUser(context.Background(), "client", "secret-user@example.com", false); !errors.Is(err, ErrDenied) {
 		t.Fatalf("user error=%v", err)
 	}
-	if _, err := r.ResolveTrust(context.Background(), "client", "issuer"); !IsIndeterminate(err) {
+	if _, err := r.ResolveTrustBindings(context.Background(), "client", "issuer", r.issuers["issuer"]); !IsIndeterminate(err) {
 		t.Fatalf("trust error=%v", err)
+	}
+	if _, _, err := r.ResolveTrustIssuer(context.Background(), "client", "https://secret-issuer.example"); err != nil {
+		t.Fatalf("issuer error=%v", err)
 	}
 	r.query = func(context.Context, string, ...any) (queryResult, error) {
 		return queryResult{columns: []string{"wrong"}, rows: [][]any{{true}}}, nil
@@ -55,14 +61,14 @@ func TestPostgreSQLOperationLogs(t *testing.T) {
 	}
 
 	logs := output.String()
-	for _, fragment := range []string{`"msg":"policy database query"`, `"query":"client_exists"`, `"outcome":"denied"`, `"cache":"miss"`, `"cache":"hit"`, `"query":"user_access"`, `"query":"trust_bindings"`, `"outcome":"indeterminate"`, `"cache":"bypass"`, `"rows":1`, `"client_id":"client"`, `"issuer_id":"issuer"`} {
+	for _, fragment := range []string{`"msg":"policy database query"`, `"query":"client_exists"`, `"outcome":"denied"`, `"cache":"miss"`, `"cache":"hit"`, `"query":"user_access"`, `"query":"trust_issuer"`, `"query":"trust_bindings"`, `"outcome":"indeterminate"`, `"cache":"bypass"`, `"rows":1`, `"client_id":"client"`, `"issuer_id":"issuer"`} {
 		if !strings.Contains(logs, fragment) {
 			t.Errorf("logs missing %s: %s", fragment, logs)
 		}
 	}
-	for _, secret := range []string{"secret-user@example.com", "trusted:secret-subject"} {
+	for _, secret := range []string{"secret-user@example.com", "trusted:secret-subject", "secret-issuer.example"} {
 		if strings.Contains(logs, secret) {
-			t.Errorf("logs leaked subject %q: %s", secret, logs)
+			t.Errorf("logs leaked policy data %q: %s", secret, logs)
 		}
 	}
 }
@@ -70,10 +76,101 @@ func TestPostgreSQLOperationLogs(t *testing.T) {
 // testConfig returns bounded policy database settings for unit tests.
 func testConfig() config.PolicyDatabaseConfig {
 	return config.PolicyDatabaseConfig{
-		Queries:           config.PolicyQueries{ClientExists: "exists", UserAccess: "user", TrustBindings: "trust"},
+		Queries:           config.PolicyQueries{ClientExists: "exists", UserAccess: "user", TrustIssuer: "issuer", TrustBindings: "trust"},
 		ClientLookupCache: config.ClientLookupCacheConfig{TTL: config.Duration(time.Minute), NegativeTTL: config.Duration(time.Minute), MaxEntries: 2},
 		PolicyBuildCache:  config.PolicyBuildCacheConfig{MaxEntries: 2}, QueryTimeout: config.Duration(time.Second),
 		MaxTrustRows: 2, MaxGroups: 3, MaxGroupBytes: 20, MaxJSONBytes: 4096,
+	}
+}
+
+// TestDisabledPolicyQueries verifies disabled operations deny without querying or trusting cached clients.
+func TestDisabledPolicyQueries(t *testing.T) {
+	cfg := testConfig()
+	cfg.Queries = config.PolicyQueries{}
+	r := newPostgreSQL(cfg, nil, nil, func(context.Context, string, ...any) (queryResult, error) {
+		t.Fatal("disabled lookup queried the database")
+		return queryResult{}, nil
+	}, nil)
+	r.putClient("client", true, time.Now().Add(time.Hour))
+	for _, cached := range []bool{false, true} {
+		if exists, err := r.clientExists(context.Background(), "client", cached); err != nil || exists {
+			t.Fatalf("cached=%v exists=%v error=%v, want no client", cached, exists, err)
+		}
+	}
+	for _, requireGroups := range []bool{false, true} {
+		if user, err := r.ResolveUser(context.Background(), "client", "user@example.com", requireGroups); !errors.Is(err, ErrDenied) || len(user.Groups) != 0 {
+			t.Fatalf("require groups=%v user=%#v error=%v, want denial", requireGroups, user, err)
+		}
+	}
+	if _, _, err := r.ResolveTrustIssuer(context.Background(), "client", "https://issuer.example"); !errors.Is(err, ErrDenied) {
+		t.Fatalf("issuer error=%v, want denial", err)
+	}
+	if bindings, err := r.ResolveTrustBindings(context.Background(), "client", "issuer", config.TrustIssuerConfig{Provider: "oidc"}); !errors.Is(err, ErrDenied) || len(bindings) != 0 {
+		t.Fatalf("bindings=%#v error=%v, want denial", bindings, err)
+	}
+}
+
+// TestResolveTrustIssuer verifies exact, bounded generic OIDC issuer resolution and failure classification.
+func TestResolveTrustIssuer(t *testing.T) {
+	const issuerURL = "https://issuer.example"
+	disabled := testConfig()
+	disabled.Queries.TrustIssuer = ""
+	disabledResolver := newPostgreSQL(disabled, nil, nil, func(context.Context, string, ...any) (queryResult, error) {
+		t.Fatal("disabled issuer lookup queried the database")
+		return queryResult{}, nil
+	}, nil)
+	if _, _, err := disabledResolver.ResolveTrustIssuer(context.Background(), "client", issuerURL); !errors.Is(err, ErrDenied) {
+		t.Fatalf("disabled issuer lookup error=%v, want denial", err)
+	}
+
+	r := newPostgreSQL(testConfig(), nil, nil, func(_ context.Context, _ string, args ...any) (queryResult, error) {
+		if !slices.Equal(args, []any{"client", issuerURL}) {
+			t.Fatalf("query arguments = %#v", args)
+		}
+		return queryResult{
+			columns: []string{"issuer_id", "provider", "issuer_url", "signing_algs", "max_token_age_seconds"},
+			rows:    [][]any{{"custom", "oidc", issuerURL, []string{"RS256", "ES256"}, int64(600)}},
+		}, nil
+	}, nil)
+	id, issuer, err := r.ResolveTrustIssuer(context.Background(), "client", issuerURL)
+	if err != nil || id != "custom" || issuer.IssuerURL != issuerURL || issuer.MaxTokenAge.Duration() != 10*time.Minute || !slices.Equal(issuer.SigningAlgs, []string{"RS256", "ES256"}) {
+		t.Fatalf("id=%q issuer=%#v error=%v", id, issuer, err)
+	}
+	r.issuers["custom"] = config.TrustIssuerConfig{Provider: "github"}
+	if _, _, err = r.ResolveTrustIssuer(context.Background(), "client", issuerURL); !IsIndeterminate(err) {
+		t.Fatalf("static issuer ID collision error=%v, want indeterminate", err)
+	}
+	delete(r.issuers, "custom")
+
+	r.query = func(context.Context, string, ...any) (queryResult, error) {
+		return queryResult{columns: []string{"issuer_id", "provider", "issuer_url", "signing_algs", "max_token_age_seconds"}}, nil
+	}
+	if _, _, err = r.ResolveTrustIssuer(context.Background(), "client", issuerURL); !errors.Is(err, ErrDenied) {
+		t.Fatalf("missing issuer error=%v, want denial", err)
+	}
+
+	for name, mutate := range map[string]func([]any){
+		"invalid identifier":  func(row []any) { row[0] = "invalid id" },
+		"null identifier":     func(row []any) { row[0] = nil },
+		"preset provider":     func(row []any) { row[1] = "github" },
+		"different URL":       func(row []any) { row[2] = issuerURL + "/other" },
+		"empty algorithms":    func(row []any) { row[3] = []string{} },
+		"symmetric algorithm": func(row []any) { row[3] = []string{"HS256"} },
+		"wrong age type":      func(row []any) { row[4] = 600 },
+		"zero age":            func(row []any) { row[4] = int64(0) },
+		"negative age":        func(row []any) { row[4] = int64(-1) },
+		"overflow age":        func(row []any) { row[4] = int64(math.MaxInt64)/int64(time.Second) + 1 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			row := []any{"custom", "oidc", issuerURL, []string{"RS256"}, int64(600)}
+			mutate(row)
+			r.query = func(context.Context, string, ...any) (queryResult, error) {
+				return queryResult{columns: []string{"issuer_id", "provider", "issuer_url", "signing_algs", "max_token_age_seconds"}, rows: [][]any{row}}, nil
+			}
+			if _, _, err := r.ResolveTrustIssuer(context.Background(), "client", issuerURL); !IsIndeterminate(err) {
+				t.Fatalf("error=%v, want indeterminate", err)
+			}
+		})
 	}
 }
 
@@ -167,11 +264,11 @@ func TestPolicyQueriesFollowReplicaSnapshots(t *testing.T) {
 	if err != nil || !slices.Equal(currentUser.Groups, []string{"current-group"}) {
 		t.Fatalf("current user snapshot = %#v, error = %v", currentUser, err)
 	}
-	oldTrust, err := r.ResolveTrust(context.Background(), "client", "issuer")
+	oldTrust, err := r.ResolveTrustBindings(context.Background(), "client", "issuer", r.issuers["issuer"])
 	if err != nil || len(oldTrust) != 1 || oldTrust[0].Subject != "trusted:old-subject" || !slices.Equal(oldTrust[0].Groups, []string{"old-group"}) {
 		t.Fatalf("lagging trust snapshot = %#v, error = %v", oldTrust, err)
 	}
-	currentTrust, err := r.ResolveTrust(context.Background(), "client", "issuer")
+	currentTrust, err := r.ResolveTrustBindings(context.Background(), "client", "issuer", r.issuers["issuer"])
 	if err != nil || len(currentTrust) != 1 || currentTrust[0].Subject != "trusted:current-subject" || !slices.Equal(currentTrust[0].Groups, []string{"current-group"}) {
 		t.Fatalf("current trust snapshot = %#v, error = %v", currentTrust, err)
 	}
@@ -187,11 +284,11 @@ func TestDynamicBindingInheritanceAndPolicyBuildCache(t *testing.T) {
 		RequiredClaims: map[string]json.RawMessage{"shared": json.RawMessage(`{"type":"integer"}`)},
 		PolicyClaims:   map[string]json.RawMessage{"shared": json.RawMessage(`{"const":1}`)},
 		BindingClaims:  map[string]json.RawMessage{"shared": json.RawMessage(`{"const":2}`)}}
-	first, err := r.CompileBindings("client", "issuer", []DynamicTrustRow{row})
+	first, err := r.compileBindings("client", "issuer", r.issuers["issuer"], []DynamicTrustRow{row})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := r.CompileBindings("client", "issuer", []DynamicTrustRow{row})
+	second, err := r.compileBindings("client", "issuer", r.issuers["issuer"], []DynamicTrustRow{row})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,12 +302,12 @@ func TestDynamicBindingInheritanceAndPolicyBuildCache(t *testing.T) {
 		t.Fatal("non-matching schema accepted")
 	}
 	row.ClientID = "other"
-	if _, err := r.CompileBindings("client", "issuer", []DynamicTrustRow{row}); !IsIndeterminate(err) {
+	if _, err := r.compileBindings("client", "issuer", r.issuers["issuer"], []DynamicTrustRow{row}); !IsIndeterminate(err) {
 		t.Fatalf("error = %v, want indeterminate", err)
 	}
 	row.ClientID = "client"
 	row.RequiredClaims = map[string]json.RawMessage{"subject": json.RawMessage(`{"$ref":"https://example.com/schema"}`)}
-	if _, err := r.CompileBindings("client", "issuer", []DynamicTrustRow{row}); !IsIndeterminate(err) {
+	if _, err := r.compileBindings("client", "issuer", r.issuers["issuer"], []DynamicTrustRow{row}); !IsIndeterminate(err) {
 		t.Fatalf("invalid dynamic schema error = %v, want indeterminate", err)
 	}
 }
@@ -299,7 +396,7 @@ func TestCompileBindingsAggregateJSONLimit(t *testing.T) {
 	row.BindingID = "one"
 	other := row
 	other.BindingID = "two"
-	if _, err := r.CompileBindings("client", "issuer", []DynamicTrustRow{row, other}); !IsIndeterminate(err) {
+	if _, err := r.compileBindings("client", "issuer", r.issuers["issuer"], []DynamicTrustRow{row, other}); !IsIndeterminate(err) {
 		t.Fatalf("aggregate JSON error=%v", err)
 	}
 }
@@ -322,7 +419,7 @@ func TestDynamicIdentifierBounds(t *testing.T) {
 	base := DynamicTrustRow{ClientID: "client", IssuerID: "issuer", Subject: "trusted:user", Groups: []string{"group"}, RequiredClaims: map[string]json.RawMessage{}, PolicyClaims: map[string]json.RawMessage{}, BindingClaims: map[string]json.RawMessage{}}
 	for _, id := range []string{"bad id", strings.Repeat("x", 65)} {
 		base.BindingID = id
-		if _, err := r.CompileBindings("client", "issuer", []DynamicTrustRow{base}); !IsIndeterminate(err) {
+		if _, err := r.compileBindings("client", "issuer", r.issuers["issuer"], []DynamicTrustRow{base}); !IsIndeterminate(err) {
 			t.Fatalf("binding %q error = %v", id, err)
 		}
 	}
@@ -385,7 +482,7 @@ func TestPolicyBuildCache(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, err := r.CompileBindings("client", "issuer", []DynamicTrustRow{row}); err != nil {
+			if _, err := r.compileBindings("client", "issuer", r.issuers["issuer"], []DynamicTrustRow{row}); err != nil {
 				t.Error(err)
 			}
 		}()
@@ -395,14 +492,14 @@ func TestPolicyBuildCache(t *testing.T) {
 		t.Fatalf("unchanged compilations=%d", compilations.Load())
 	}
 	row.BindingClaims["n"] = json.RawMessage(`{"const":2}`)
-	if _, err := r.CompileBindings("client", "issuer", []DynamicTrustRow{row}); err != nil {
+	if _, err := r.compileBindings("client", "issuer", r.issuers["issuer"], []DynamicTrustRow{row}); err != nil {
 		t.Fatal(err)
 	}
 	if compilations.Load() != 2 {
 		t.Fatalf("changed compilations=%d", compilations.Load())
 	}
 	row.BindingClaims["n"] = json.RawMessage(`{"const":1}`)
-	if _, err := r.CompileBindings("client", "issuer", []DynamicTrustRow{row}); err != nil {
+	if _, err := r.compileBindings("client", "issuer", r.issuers["issuer"], []DynamicTrustRow{row}); err != nil {
 		t.Fatal(err)
 	}
 	if compilations.Load() != 3 {

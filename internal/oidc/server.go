@@ -27,7 +27,8 @@ import (
 type policyResolver interface {
 	ResolveClient(context.Context, string, bool) (authpolicy.ResolvedClient, error)
 	ResolveUser(context.Context, authpolicy.ResolvedClient, string) (authpolicy.ResolvedUser, error)
-	ResolveTrust(context.Context, authpolicy.ResolvedClient, string) ([]config.EffectiveTrustBinding, error)
+	ResolveTrustIssuer(context.Context, authpolicy.ResolvedClient, string) (authpolicy.ResolvedTrustIssuer, error)
+	ResolveTrustBindings(context.Context, authpolicy.ResolvedClient, authpolicy.ResolvedTrustIssuer) ([]config.EffectiveTrustBinding, error)
 }
 
 type Server struct {

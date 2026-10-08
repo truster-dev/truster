@@ -47,6 +47,11 @@ External OIDC and CI identities use three configuration layers:
 - `static_policy.trust_policies` defines reusable claim requirements.
 - Static client `trust_bindings` authorize policies and assign a subject and groups.
 
+For database-managed clients, Truster can load approved OIDC issuer settings
+from the policy database using its `trust_issuer` query. Static issuers still
+take precedence. See the [policy database guide](policy-database.md) for the
+strict lookup contract and security behavior.
+
 ```jsonc
 {
   "service_token_issuers": {
@@ -85,8 +90,8 @@ External OIDC and CI identities use three configuration layers:
 
 Issuer `provider` is `github`, `buildkite`, or `oidc`. The GitHub and Buildkite
 presets supply their official issuer settings and do not accept overrides for
-`issuer_url`, `signing_algs`, or `max_token_age`. Generic `oidc` issuers require
-all three settings; HTTPS is required except on localhost.
+`issuer_url`, `signing_algs`, or `max_token_age`. Issuers using the `oidc`
+provider require all three settings; HTTPS is required except on localhost.
 
 Claim rules are JSON Schema fragments, and every configured claim must be present.
 The `claims` from a binding are overlayed on top of `claims` from a policy, where

@@ -29,10 +29,13 @@
       "require_user_groups_from_policy": true,
       "refresh_tokens": { "enabled": true },
     },
-    // Default queries use the tables created by examples/policy-db/postgresql.sql.
+    // All four omitted queries use examples/policy-db/postgresql.sql.
+    // Set an individual query to null to disable its lookup (fail closed).
+    // For example, "queries": { "trust_issuer": null } disables dynamic issuers.
     // "queries": {
     //   "client_exists": "SELECT EXISTS (SELECT 1 FROM clusters WHERE oidc_client_id = $1 AND enabled) AS exists",
     //   "user_access": "SELECT (cu.user_id IS NOT NULL AND c.enabled AND u.enabled) AS allowed, COALESCE(cu.groups, '{}'::text[]) AS groups FROM (SELECT $1::text AS client_id, $2::text AS email) input LEFT JOIN clusters c ON c.oidc_client_id = input.client_id LEFT JOIN users u ON lower(u.email) = input.email LEFT JOIN cluster_users cu ON cu.cluster_id = c.id AND cu.user_id = u.id",
+    //   "trust_issuer": "SELECT i.issuer_id, i.provider, i.issuer_url, i.signing_algs, i.max_token_age_seconds FROM clusters c JOIN trust_issuers i ON i.account_id = c.account_id WHERE c.enabled AND i.enabled AND c.oidc_client_id = $1 AND i.issuer_url = $2",
     //   "trust_bindings": "SELECT c.oidc_client_id AS client_id, i.issuer_id, b.id::text AS binding_id, b.subject, p.required_claims, p.claims AS policy_claims, b.claims AS binding_claims, b.groups FROM clusters c JOIN cluster_trust_bindings b ON b.cluster_id = c.id JOIN trust_policies p ON p.id = b.trust_policy_id JOIN trust_issuers i ON i.id = p.issuer_id WHERE c.enabled AND c.oidc_client_id = $1 AND i.issuer_id = $2",
     // },
     "client_lookup_cache": {

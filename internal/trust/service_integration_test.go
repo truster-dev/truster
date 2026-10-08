@@ -20,8 +20,37 @@ import (
 	"github.com/lestrrat-go/jwx/v2/jwk"
 	"github.com/lestrrat-go/jwx/v2/jws"
 	"github.com/lestrrat-go/jwx/v2/jwt"
+	"github.com/truster-dev/truster/v2/internal/authpolicy"
 	"github.com/truster-dev/truster/v2/internal/config"
 )
+
+// dynamicPolicyResolver supplies one database-style issuer and binding to the verifier.
+type dynamicPolicyResolver struct {
+	issuer  config.TrustIssuerConfig
+	binding config.EffectiveTrustBinding
+	calls   int
+}
+
+// ResolveClient returns a database-style client handle opaque to this test seam.
+func (r *dynamicPolicyResolver) ResolveClient(context.Context, string, bool) (authpolicy.ResolvedClient, error) {
+	r.calls++
+	return authpolicy.ResolvedClient{}, nil
+}
+
+// ResolveTrustIssuer returns the approved issuer only for its exact URL.
+func (r *dynamicPolicyResolver) ResolveTrustIssuer(_ context.Context, _ authpolicy.ResolvedClient, issuerURL string) (authpolicy.ResolvedTrustIssuer, error) {
+	r.calls++
+	if issuerURL != r.issuer.IssuerURL {
+		return authpolicy.ResolvedTrustIssuer{}, authpolicy.ErrDenied
+	}
+	return authpolicy.ResolvedTrustIssuer{ID: "dynamic", Config: r.issuer, Dynamic: true}, nil
+}
+
+// ResolveTrustBindings returns the current effective binding.
+func (r *dynamicPolicyResolver) ResolveTrustBindings(context.Context, authpolicy.ResolvedClient, authpolicy.ResolvedTrustIssuer) ([]config.EffectiveTrustBinding, error) {
+	r.calls++
+	return []config.EffectiveTrustBinding{r.binding}, nil
+}
 
 // tlsIssuer is an exact local OIDC discovery, JWKS, and JWT-signing fixture.
 type tlsIssuer struct {
@@ -85,6 +114,10 @@ func (f *tlsIssuer) sign(claims map[string]any, options ...any) string {
 	now := time.Now().UTC()
 	defaults := map[string]any{"iss": f.server.URL, "sub": "upstream-user", "aud": "client", "iat": now, "exp": now.Add(time.Hour), "repository": "acme/repo"}
 	for k, v := range claims {
+		if v == nil {
+			delete(defaults, k)
+			continue
+		}
 		defaults[k] = v
 	}
 	token := jwt.New()
@@ -199,6 +232,87 @@ func TestVerifyAndEvaluateProductionPath(t *testing.T) {
 			}
 			if err != nil && result != nil && result.Binding != nil {
 				t.Fatal("denial retained binding")
+			}
+		})
+	}
+}
+
+// TestVerifyAndEvaluateDynamicIssuer exercises database-supplied issuer verification through the production path.
+func TestVerifyAndEvaluateDynamicIssuer(t *testing.T) {
+	issuer := newTLSIssuer(t)
+	service := serviceForIssuer(t, issuer, "acme/repo")
+	binding := *service.cfg.StaticPolicy.Clients["client"].TrustBindings[0].Effective
+	resolver := &dynamicPolicyResolver{
+		issuer:  config.TrustIssuerConfig{Provider: "oidc", IssuerURL: issuer.server.URL, SigningAlgs: []string{"RS256"}, MaxTokenAge: config.Duration(10 * time.Minute)},
+		binding: binding,
+	}
+	service.policyResolver = resolver
+	service.dynamicClient = issuer.server.Client()
+	result, err := service.VerifyAndEvaluate(context.Background(), issuer.sign(nil), "client")
+	if err != nil || result.Binding == nil || result.IssuerID != "dynamic" || resolver.calls != 3 {
+		t.Fatalf("result=%#v error=%v", result, err)
+	}
+	otherKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver.calls = 0
+	result, err = service.VerifyAndEvaluate(context.Background(), issuer.sign(nil, otherKey), "client")
+	if err == nil || err.Error() != "token verification failed" || result != nil || resolver.calls != 2 {
+		t.Fatalf("forged token result=%#v error=%v policy calls=%d, want signature rejection before binding lookup", result, err, resolver.calls)
+	}
+}
+
+// TestInvalidTokensAvoidPolicyLookup verifies cheap rejection precedes client, issuer, and binding resolution.
+func TestInvalidTokensAvoidPolicyLookup(t *testing.T) {
+	issuer := newTLSIssuer(t)
+	resolver := &dynamicPolicyResolver{}
+	service := NewService(&config.Config{}, resolver)
+	var deep any = "leaf"
+	for range 17 {
+		deep = map[string]any{"nested": deep}
+	}
+	tests := []struct {
+		name   string
+		claims map[string]any
+	}{
+		{"missing issuer", map[string]any{"iss": nil}},
+		{"missing subject", map[string]any{"sub": nil}},
+		{"missing audience", map[string]any{"aud": nil}},
+		{"missing expiration", map[string]any{"exp": nil}},
+		{"missing issued at", map[string]any{"iat": nil}},
+		{"empty subject", map[string]any{"sub": ""}},
+		{"wrong audience", map[string]any{"aud": "other"}},
+		{"multiple audiences", map[string]any{"aud": []string{"client", "other"}}},
+		{"wrong authorized party", map[string]any{"azp": "other"}},
+		{"non-string authorized party", map[string]any{"azp": 42}},
+		{"expired", map[string]any{"exp": time.Now().Add(-time.Minute)}},
+		{"epoch expiration", map[string]any{"exp": time.Unix(0, 0)}},
+		{"epoch issued at", map[string]any{"iat": time.Unix(0, 0)}},
+		{"future issued at", map[string]any{"iat": time.Now().Add(time.Hour)}},
+		{"future not before", map[string]any{"nbf": time.Now().Add(time.Hour)}},
+		{"deep claims", map[string]any{"custom": deep}},
+		{"long claim", map[string]any{"custom": strings.Repeat("x", 8193)}},
+		{"large collection", map[string]any{"custom": make([]any, 257)}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := service.VerifyAndEvaluate(context.Background(), issuer.sign(tt.claims), "client")
+			if err == nil || result != nil || resolver.calls != 0 {
+				t.Fatalf("result=%#v error=%v policy calls=%d, want rejection before lookup", result, err, resolver.calls)
+			}
+		})
+	}
+	for name, raw := range map[string]string{
+		"empty":       "",
+		"oversized":   strings.Repeat("x", MaxJWTBytes+1),
+		"malformed":   "not.a.jwt",
+		"missing kid": issuer.sign(nil, ""),
+	} {
+		t.Run(name, func(t *testing.T) {
+			result, err := service.VerifyAndEvaluate(context.Background(), raw, "client")
+			if err == nil || result != nil || resolver.calls != 0 {
+				t.Fatalf("result=%#v error=%v policy calls=%d, want rejection before lookup", result, err, resolver.calls)
 			}
 		})
 	}

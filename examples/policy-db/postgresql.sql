@@ -19,6 +19,17 @@ CREATE TABLE IF NOT EXISTS truster_policy.users (
     PRIMARY KEY (client_id, subject)
 );
 
+CREATE TABLE IF NOT EXISTS truster_policy.trust_issuers (
+    client_id text NOT NULL REFERENCES truster_policy.clients (client_id) ON DELETE CASCADE,
+    issuer_id text NOT NULL,
+    provider text NOT NULL CHECK (provider = 'oidc'),
+    issuer_url text NOT NULL CHECK (issuer_url LIKE 'https://%'),
+    signing_algs text[] NOT NULL CHECK (cardinality(signing_algs) > 0 AND array_position(signing_algs, NULL) IS NULL),
+    max_token_age_seconds bigint NOT NULL CHECK (max_token_age_seconds > 0),
+    PRIMARY KEY (client_id, issuer_id),
+    UNIQUE (client_id, issuer_url)
+);
+
 CREATE TABLE IF NOT EXISTS truster_policy.trust_bindings (
     client_id text NOT NULL REFERENCES truster_policy.clients (client_id) ON DELETE CASCADE,
     issuer_id text NOT NULL,

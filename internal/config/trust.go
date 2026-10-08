@@ -22,6 +22,32 @@ var trustNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$`)
 // ValidTrustBindingID reports whether id satisfies the shared static and dynamic binding identifier contract.
 func ValidTrustBindingID(id string) bool { return trustNamePattern.MatchString(id) }
 
+// ValidateDynamicTrustIssuer validates one effective generic OIDC issuer returned by database policy.
+func ValidateDynamicTrustIssuer(name string, issuer TrustIssuerConfig) error {
+	if !trustNamePattern.MatchString(name) {
+		return fmt.Errorf("issuer name %q is invalid", name)
+	}
+	if issuer.Provider != "oidc" {
+		return fmt.Errorf("issuer %q: database policy provider must be oidc", name)
+	}
+	if err := validateIssuerURL(issuer.IssuerURL); err != nil {
+		return fmt.Errorf("issuer %q: %w", name, err)
+	}
+	u, _ := url.Parse(issuer.IssuerURL)
+	if u.Scheme != "https" {
+		return fmt.Errorf("issuer %q: database policy issuer_url must use https", name)
+	}
+	if len(issuer.SigningAlgs) == 0 || issuer.MaxTokenAge.Duration() <= 0 {
+		return fmt.Errorf("issuer %q: signing_algs and max_token_age are required", name)
+	}
+	for _, alg := range issuer.SigningAlgs {
+		if !isTrustAlg(alg) {
+			return fmt.Errorf("issuer %q: unsupported asymmetric signing algorithm %q", name, alg)
+		}
+	}
+	return nil
+}
+
 // TrustIssuerConfig configures external OIDC verification.
 type TrustIssuerConfig struct {
 	Provider    string   `json:"provider"`

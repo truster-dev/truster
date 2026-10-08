@@ -6,6 +6,7 @@ package oidc
 
 import (
 	"context"
+	"time"
 
 	"github.com/truster-dev/truster/v2/internal/authpolicy"
 	"github.com/truster-dev/truster/v2/internal/config"
@@ -49,8 +50,13 @@ func (f *fakePolicyResolver) ResolveUser(context.Context, authpolicy.ResolvedCli
 	return authpolicy.ResolvedUser{}, nil
 }
 
-// ResolveTrust returns the configured effective bindings.
-func (f *fakePolicyResolver) ResolveTrust(context.Context, authpolicy.ResolvedClient, string) ([]config.EffectiveTrustBinding, error) {
+// ResolveTrustIssuer returns a generic test issuer for the exact requested URL.
+func (f *fakePolicyResolver) ResolveTrustIssuer(_ context.Context, _ authpolicy.ResolvedClient, issuerURL string) (authpolicy.ResolvedTrustIssuer, error) {
+	return authpolicy.ResolvedTrustIssuer{ID: "local", Config: config.TrustIssuerConfig{Provider: "oidc", IssuerURL: issuerURL, SigningAlgs: []string{"RS256"}, MaxTokenAge: config.Duration(10 * time.Minute)}}, nil
+}
+
+// ResolveTrustBindings returns the configured effective bindings.
+func (f *fakePolicyResolver) ResolveTrustBindings(context.Context, authpolicy.ResolvedClient, authpolicy.ResolvedTrustIssuer) ([]config.EffectiveTrustBinding, error) {
 	f.resolveTrustCalls++
 	return f.trust, f.trustErr
 }

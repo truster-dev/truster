@@ -129,10 +129,12 @@ type PolicyClientDefaults struct {
 	RequirePAR                  bool               `json:"require_par,omitempty"`
 }
 
-// PolicyQueries contains the three parameterized policy database queries.
+// PolicyQueries contains the effective parameterized policy database queries.
+// Parsing supplies defaults for omitted fields and represents null disables as empty strings.
 type PolicyQueries struct {
 	ClientExists  string `json:"client_exists"`
 	UserAccess    string `json:"user_access"`
+	TrustIssuer   string `json:"trust_issuer,omitempty"`
 	TrustBindings string `json:"trust_bindings"`
 }
 

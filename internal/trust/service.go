@@ -10,7 +10,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"sync"
@@ -27,15 +29,20 @@ import (
 
 const (
 	// MaxJWTBytes is the shared maximum compact external JWT size.
-	MaxJWTBytes = 64 << 10
-	cacheTTL    = 5 * time.Minute
-	refreshWait = 30 * time.Second
+	MaxJWTBytes      = 64 << 10
+	cacheTTL         = 5 * time.Minute
+	refreshWait      = 30 * time.Second
+	maxCachedIssuers = 1024
 )
+
+// sharedIPv4Space is carrier-grade NAT space, which netip.IsPrivate does not cover.
+var sharedIPv4Space = netip.MustParsePrefix("100.64.0.0/10")
 
 // policyResolver defines the client and trust decisions consumed during token verification.
 type policyResolver interface {
 	ResolveClient(context.Context, string, bool) (authpolicy.ResolvedClient, error)
-	ResolveTrust(context.Context, authpolicy.ResolvedClient, string) ([]config.EffectiveTrustBinding, error)
+	ResolveTrustIssuer(context.Context, authpolicy.ResolvedClient, string) (authpolicy.ResolvedTrustIssuer, error)
+	ResolveTrustBindings(context.Context, authpolicy.ResolvedClient, authpolicy.ResolvedTrustIssuer) ([]config.EffectiveTrustBinding, error)
 }
 
 // Result contains verified provenance and the exactly matched binding.
@@ -57,6 +64,7 @@ type Diagnostic struct {
 type Service struct {
 	cfg            *config.Config
 	client         *http.Client
+	dynamicClient  *http.Client
 	mu             sync.Mutex
 	cache          map[string]cachedIssuer
 	loads          singleflight.Group
@@ -84,7 +92,12 @@ func NewService(cfg *config.Config, resolver policyResolver) *Service {
 	if resolver == nil {
 		resolver = authpolicy.NewResolver(cfg, nil)
 	}
-	return &Service{cfg: cfg, client: client, cache: make(map[string]cachedIssuer), policyResolver: resolver}
+	dynamicTransport := transport.Clone()
+	dynamicTransport.Proxy = nil
+	dynamicTransport.DialContext = publicDialContext
+	dynamicTransport.DialTLSContext = nil
+	dynamicClient := &http.Client{Timeout: client.Timeout, Transport: dynamicTransport, CheckRedirect: client.CheckRedirect}
+	return &Service{cfg: cfg, client: client, dynamicClient: dynamicClient, cache: make(map[string]cachedIssuer), policyResolver: resolver}
 }
 
 // VerifyAndEvaluate runs the complete production verification and exactly-one evaluator.
@@ -95,12 +108,9 @@ func (s *Service) VerifyAndEvaluate(ctx context.Context, raw, clientID string) (
 	if len(raw) == 0 || len(raw) > MaxJWTBytes {
 		return nil, fmt.Errorf("token size is invalid")
 	}
-	resolved, err := s.policyResolver.ResolveClient(ctx, clientID, true)
-	if err != nil {
-		if authpolicy.IsIndeterminate(err) {
-			return nil, err
-		}
-		return nil, fmt.Errorf("unknown client")
+	alg, kid, err := tokenHeaders(raw)
+	if err != nil || kid == "" {
+		return nil, fmt.Errorf("unacceptable token header")
 	}
 	unverified, err := jwt.Parse([]byte(raw), jwt.WithVerify(false), jwt.WithValidate(false))
 	if err != nil {
@@ -110,21 +120,44 @@ func (s *Service) VerifyAndEvaluate(ctx context.Context, raw, clientID string) (
 	if issuerURL == "" {
 		return nil, fmt.Errorf("issuer is required")
 	}
-	issuerName, issuer, ok := s.findIssuer(issuerURL)
-	if !ok {
+	// Reject obviously invalid tokens before any policy or network lookup.
+	// Passing these checks does not authenticate the token; repeat them after
+	// verifying the signature over the same original bytes.
+	if err := validateStandardClaims(unverified, clientID); err != nil {
+		return nil, err
+	}
+	claims, err := decodePayload(raw)
+	if err != nil {
+		return nil, fmt.Errorf("decoded claims exceed safe limits")
+	}
+	if err := boundClaims(claims, 0); err != nil {
+		return nil, err
+	}
+	resolved, err := s.policyResolver.ResolveClient(ctx, clientID, true)
+	if err != nil {
+		if authpolicy.IsIndeterminate(err) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("unknown client")
+	}
+	resolvedIssuer, err := s.policyResolver.ResolveTrustIssuer(ctx, resolved, issuerURL)
+	if err != nil {
+		if authpolicy.IsIndeterminate(err) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("untrusted issuer")
 	}
-	alg, kid, err := tokenHeaders(raw)
-	if err != nil || !contains(issuer.SigningAlgs, alg) || kid == "" {
+	issuerName, issuer := resolvedIssuer.ID, resolvedIssuer.Config
+	if !contains(issuer.SigningAlgs, alg) {
 		return nil, fmt.Errorf("unacceptable token header")
 	}
-	set, err := s.loadIssuer(ctx, issuer, false)
+	set, err := s.loadIssuer(ctx, resolvedIssuer, false)
 	if err != nil {
 		return nil, err
 	}
 	key, keyErr := selectKey(set, kid, alg)
 	if keyErr != nil {
-		set, err = s.loadIssuer(ctx, issuer, true)
+		set, err = s.loadIssuer(ctx, resolvedIssuer, true)
 		if err == nil {
 			key, keyErr = selectKey(set, kid, alg)
 		}
@@ -132,28 +165,18 @@ func (s *Service) VerifyAndEvaluate(ctx context.Context, raw, clientID string) (
 	if keyErr != nil {
 		return nil, fmt.Errorf("token verification failed")
 	}
-	verified, err := jwt.Parse([]byte(raw), jwt.WithKey(jwa.SignatureAlgorithm(alg), key), jwt.WithValidate(true), jwt.WithIssuer(issuer.IssuerURL), jwt.WithRequiredClaim(jwt.SubjectKey), jwt.WithRequiredClaim(jwt.AudienceKey), jwt.WithRequiredClaim(jwt.ExpirationKey), jwt.WithRequiredClaim(jwt.IssuedAtKey))
-	if err != nil {
+	verified, err := jwt.Parse([]byte(raw), jwt.WithKey(jwa.SignatureAlgorithm(alg), key), jwt.WithValidate(false))
+	if err != nil || verified.Issuer() != issuer.IssuerURL {
 		return nil, fmt.Errorf("token verification failed")
 	}
-	if verified.Subject() == "" || len(verified.Audience()) != 1 || verified.Audience()[0] != clientID || verified.IssuedAt().IsZero() || time.Since(verified.IssuedAt()) > issuer.MaxTokenAge.Duration() || verified.IssuedAt().After(time.Now().Add(time.Minute)) {
-		return nil, fmt.Errorf("standard claims are invalid")
-	}
-	if azp, exists := verified.Get("azp"); exists {
-		value, ok := azp.(string)
-		if !ok || value != clientID {
-			return nil, fmt.Errorf("authorized party is invalid")
-		}
-	}
-	claims, err := decodePayload(raw)
-	if err != nil {
-		return nil, fmt.Errorf("decoded claims exceed safe limits")
-	}
-	if err = boundClaims(claims, 0); err != nil {
+	if err := validateStandardClaims(verified, clientID); err != nil {
 		return nil, err
 	}
+	if time.Since(verified.IssuedAt()) > issuer.MaxTokenAge.Duration() {
+		return nil, fmt.Errorf("standard claims are invalid")
+	}
 	result := &Result{IssuerID: issuerName, Issuer: issuerURL, UpstreamSubject: verified.Subject(), Claims: claims}
-	bindings, resolveErr := s.policyResolver.ResolveTrust(ctx, resolved, issuerName)
+	bindings, resolveErr := s.policyResolver.ResolveTrustBindings(ctx, resolved, resolvedIssuer)
 	if resolveErr != nil {
 		return result, resolveErr
 	}
@@ -183,6 +206,25 @@ func (s *Service) VerifyAndEvaluate(ctx context.Context, raw, clientID string) (
 	return result, nil
 }
 
+// validateStandardClaims rejects invalid issuer-independent claims before and after signature verification.
+func validateStandardClaims(token jwt.Token, clientID string) error {
+	if err := jwt.Validate(token, jwt.WithRequiredClaim(jwt.SubjectKey), jwt.WithRequiredClaim(jwt.AudienceKey), jwt.WithRequiredClaim(jwt.ExpirationKey), jwt.WithRequiredClaim(jwt.IssuedAtKey)); err != nil {
+		return fmt.Errorf("token verification failed")
+	}
+	// jwx skips time validation for zero and epoch-zero dates, even when the
+	// claim is present. Neither is a usable expiration or issued-at value.
+	if token.Subject() == "" || len(token.Audience()) != 1 || token.Audience()[0] != clientID || token.Expiration().IsZero() || token.Expiration().Unix() == 0 || token.IssuedAt().IsZero() || token.IssuedAt().Unix() == 0 {
+		return fmt.Errorf("standard claims are invalid")
+	}
+	if azp, exists := token.Get("azp"); exists {
+		value, ok := azp.(string)
+		if !ok || value != clientID {
+			return fmt.Errorf("authorized party is invalid")
+		}
+	}
+	return nil
+}
+
 // decodePayload decodes the original signed bytes while preserving JSON numbers exactly.
 func decodePayload(raw string) (map[string]any, error) {
 	parts := strings.Split(raw, ".")
@@ -203,41 +245,63 @@ func decodePayload(raw string) (map[string]any, error) {
 }
 
 // loadIssuer returns cached validated discovery and JWKS, coalescing upstream loads.
-func (s *Service) loadIssuer(ctx context.Context, issuer config.TrustIssuerConfig, force bool) (jwk.Set, error) {
+func (s *Service) loadIssuer(ctx context.Context, resolved authpolicy.ResolvedTrustIssuer, force bool) (jwk.Set, error) {
+	issuer := resolved.Config
+	cacheKey := "static:" + issuer.IssuerURL
+	client := s.client
+	if resolved.Dynamic {
+		cacheKey = "dynamic:" + issuer.IssuerURL
+		client = s.dynamicClient
+	}
+	if client == nil {
+		return nil, fmt.Errorf("issuer HTTP client is unavailable")
+	}
 	now := time.Now()
 	s.mu.Lock()
 	if s.cache == nil {
 		s.cache = make(map[string]cachedIssuer)
 	}
-	cached := s.cache[issuer.IssuerURL]
+	cached := s.cache[cacheKey]
 	if cached.keys != nil && ((!force && now.Before(cached.expires)) || (force && now.Sub(cached.lastRefresh) < refreshWait)) {
 		s.mu.Unlock()
 		return cached.keys, nil
 	}
 	s.mu.Unlock()
-	value, err, _ := s.loads.Do(issuer.IssuerURL, func() (any, error) {
+	value, err, _ := s.loads.Do(cacheKey, func() (any, error) {
 		s.mu.Lock()
-		current := s.cache[issuer.IssuerURL]
+		current := s.cache[cacheKey]
 		if current.keys != nil && ((!force && time.Now().Before(current.expires)) || (force && time.Since(current.lastRefresh) < refreshWait)) {
 			s.mu.Unlock()
 			return current.keys, nil
 		}
 		if force {
 			current.lastRefresh = time.Now()
-			s.cache[issuer.IssuerURL] = current
+			if current.keys != nil {
+				s.cache[cacheKey] = current
+			}
 		}
 		s.mu.Unlock()
-		doc, loadErr := s.discovery(ctx, issuer)
+		doc, loadErr := discovery(ctx, client, issuer)
 		if loadErr != nil {
 			return nil, loadErr
 		}
-		keys, loadErr := s.fetchJWKS(ctx, doc.JWKSURI, issuer.IssuerURL)
+		keys, loadErr := fetchJWKS(ctx, client, doc.JWKSURI)
 		if loadErr != nil {
 			return nil, loadErr
 		}
 		s.mu.Lock()
+		if _, exists := s.cache[cacheKey]; !exists && len(s.cache) >= maxCachedIssuers {
+			var oldestKey string
+			var oldest time.Time
+			for key, entry := range s.cache {
+				if oldestKey == "" || entry.expires.Before(oldest) {
+					oldestKey, oldest = key, entry.expires
+				}
+			}
+			delete(s.cache, oldestKey)
+		}
 		refreshed := current.lastRefresh
-		s.cache[issuer.IssuerURL] = cachedIssuer{document: doc, keys: keys, expires: time.Now().Add(cacheTTL), lastRefresh: refreshed}
+		s.cache[cacheKey] = cachedIssuer{document: doc, keys: keys, expires: time.Now().Add(cacheTTL), lastRefresh: refreshed}
 		s.mu.Unlock()
 		return keys, nil
 	})
@@ -269,25 +333,16 @@ func selectKey(set jwk.Set, kid, alg string) (jwk.Key, error) {
 	return selected, nil
 }
 
+// discoveryDocument contains the OIDC metadata required for token verification.
 type discoveryDocument struct {
 	Issuer  string `json:"issuer"`
 	JWKSURI string `json:"jwks_uri"`
 }
 
-// findIssuer selects a configured issuer by exact URL.
-func (s *Service) findIssuer(value string) (string, config.TrustIssuerConfig, bool) {
-	for name, issuer := range s.cfg.ServiceTokenIssuers {
-		if issuer.IssuerURL == value {
-			return name, issuer, true
-		}
-	}
-	return "", config.TrustIssuerConfig{}, false
-}
-
 // discovery fetches and validates bounded OIDC metadata.
-func (s *Service) discovery(ctx context.Context, issuer config.TrustIssuerConfig) (discoveryDocument, error) {
+func discovery(ctx context.Context, client *http.Client, issuer config.TrustIssuerConfig) (discoveryDocument, error) {
 	var doc discoveryDocument
-	if err := s.getJSON(ctx, strings.TrimSuffix(issuer.IssuerURL, "/")+"/.well-known/openid-configuration", 32<<10, &doc); err != nil {
+	if err := getJSON(ctx, client, strings.TrimSuffix(issuer.IssuerURL, "/")+"/.well-known/openid-configuration", 32<<10, &doc); err != nil {
 		return doc, fmt.Errorf("discovery unavailable: %w", err)
 	}
 	if doc.Issuer != issuer.IssuerURL {
@@ -304,9 +359,9 @@ func (s *Service) discovery(ctx context.Context, issuer config.TrustIssuerConfig
 }
 
 // fetchJWKS obtains a bounded key set from validated metadata.
-func (s *Service) fetchJWKS(ctx context.Context, uri, issuer string) (jwk.Set, error) {
+func fetchJWKS(ctx context.Context, client *http.Client, uri string) (jwk.Set, error) {
 	var raw json.RawMessage
-	if err := s.getJSON(ctx, uri, 128<<10, &raw); err != nil {
+	if err := getJSON(ctx, client, uri, 128<<10, &raw); err != nil {
 		return nil, fmt.Errorf("JWKS unavailable: %w", err)
 	}
 	set, err := jwk.Parse(raw)
@@ -317,12 +372,12 @@ func (s *Service) fetchJWKS(ctx context.Context, uri, issuer string) (jwk.Set, e
 }
 
 // getJSON performs one size-limited JSON GET.
-func (s *Service) getJSON(ctx context.Context, uri string, limit int64, out any) error {
+func getJSON(ctx context.Context, client *http.Client, uri string, limit int64, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, uri, nil)
 	if err != nil {
 		return err
 	}
-	resp, err := s.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -360,10 +415,41 @@ func contains(values []string, value string) bool {
 	return false
 }
 
+// publicDialContext filters resolved destinations and dials their IPs without a second DNS lookup.
+func publicDialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, fmt.Errorf("invalid issuer address")
+	}
+	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, fmt.Errorf("resolve issuer host: %w", err)
+	}
+	dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
+	for _, address := range addresses {
+		ip, ok := netip.AddrFromSlice(address.IP)
+		if !ok || !allowedDynamicIssuerIP(ip) {
+			continue
+		}
+		connection, dialErr := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		if dialErr == nil {
+			return connection, nil
+		}
+	}
+	return nil, fmt.Errorf("issuer host has no reachable public address")
+}
+
+// allowedDynamicIssuerIP rejects direct local, private, and shared-network destinations.
+// Deployment egress controls must enforce restrictions involving routing or address translation.
+func allowedDynamicIssuerIP(ip netip.Addr) bool {
+	ip = ip.Unmap()
+	return ip.IsGlobalUnicast() && !ip.IsPrivate() && !sharedIPv4Space.Contains(ip)
+}
+
 // isLocal reports whether HTTP development is permitted for a host.
 func isLocal(host string) bool { return host == "localhost" || host == "127.0.0.1" || host == "::1" }
 
-// boundClaims limits verified value depth, lengths, and collection sizes.
+// boundClaims limits token value depth, lengths, and collection sizes before policy lookup.
 func boundClaims(value any, depth int) error {
 	if depth > 16 {
 		return fmt.Errorf("claims exceed safe depth")
